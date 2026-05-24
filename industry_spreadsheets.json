@@ -1,0 +1,215 @@
+{
+  "互联网": {
+    "spreadsheet_id": "1XzgJZWawYDQ6NVUDKrngeaGilN2e2ETXUHyWUw2yieg",
+    "url": "https://docs.google.com/spreadsheets/d/1XzgJZWawYDQ6NVUDKrngeaGilN2e2ETXUHyWUw2yieg",
+    "codes": [
+      "PDD",
+      "JD",
+      "VIPS",
+      "BIDU",
+      "9999",
+      "3690",
+      "700",
+      "GOOGL"
+    ]
+  },
+  "地产开发": {
+    "spreadsheet_id": "1Iqz2wiWSW7KQkz4K6-I0HWm635zDhYYusoGWW1VZJHg",
+    "url": "https://docs.google.com/spreadsheets/d/1Iqz2wiWSW7KQkz4K6-I0HWm635zDhYYusoGWW1VZJHg",
+    "codes": [
+      "0688",
+      "0817",
+      "0960",
+      "1109",
+      "0101",
+      "000002"
+    ]
+  },
+  "饮料": {
+    "spreadsheet_id": "1pEJtNwNFmr72OW9Zze0PIWtrdAv8sys8SjnVhn9_4Fw",
+    "url": "https://docs.google.com/spreadsheets/d/1pEJtNwNFmr72OW9Zze0PIWtrdAv8sys8SjnVhn9_4Fw",
+    "codes": [
+      "600519",
+      "000568",
+      "002304",
+      "600809",
+      "0168",
+      "0291",
+      "600132",
+      "603369",
+      "9633"
+    ]
+  },
+  "传媒": {
+    "spreadsheet_id": "1Y3RoJPAG4uO5fUI7Ipil67Raa1ObT7Sl49arbosCbkE",
+    "url": "https://docs.google.com/spreadsheets/d/1Y3RoJPAG4uO5fUI7Ipil67Raa1ObT7Sl49arbosCbkE",
+    "codes": [
+      "300770",
+      "601900",
+      "601019",
+      "601928",
+      "0811"
+    ]
+  },
+  "贸易": {
+    "spreadsheet_id": "10OT6fdG5G1Wpk9fbgYJ4t_BOjaKCajHSHXUb1ywi_MM",
+    "url": "https://docs.google.com/spreadsheets/d/10OT6fdG5G1Wpk9fbgYJ4t_BOjaKCajHSHXUb1ywi_MM",
+    "codes": [
+      "001216",
+      "0113",
+      "1910"
+    ]
+  },
+  "纺织服装": {
+    "spreadsheet_id": "1Z-UwqbvNuVaYI6Y47P1RLHJrQdvoxGdV-vyoublwjBs",
+    "url": "https://docs.google.com/spreadsheets/d/1Z-UwqbvNuVaYI6Y47P1RLHJrQdvoxGdV-vyoublwjBs",
+    "codes": [
+      "2020",
+      "600398",
+      "002832",
+      "3306",
+      "3998",
+      "002327",
+      "002293",
+      "603365"
+    ]
+  },
+  "食品": {
+    "spreadsheet_id": "1zt3knv0iC27juO08lWTe7CZDZJrbqyi6sfPZnYSpIh0",
+    "url": "https://docs.google.com/spreadsheets/d/1zt3knv0iC27juO08lWTe7CZDZJrbqyi6sfPZnYSpIh0",
+    "codes": [
+      "6186",
+      "600887",
+      "2319",
+      "002507",
+      "002557",
+      "9985"
+    ]
+  },
+  "餐饮": {
+    "spreadsheet_id": "1LSSNaq0yX4kxhL4YoepRV4RjC107EyufFUVS_1uSsLI",
+    "url": "https://docs.google.com/spreadsheets/d/1LSSNaq0yX4kxhL4YoepRV4RjC107EyufFUVS_1uSsLI",
+    "codes": [
+      "6862",
+      "9987",
+      "2097",
+      "LKNCY",
+      "2555",
+      "9922",
+      "600305",
+      "603043",
+      "YUMC",
+      "LKNC"
+    ]
+  },
+  "个人用品": {
+    "spreadsheet_id": "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0",
+    "url": "https://docs.google.com/spreadsheets/d/1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0",
+    "codes": [
+      "1044",
+      "603899",
+      "603605",
+      "301371",
+      "300866"
+    ]
+  },
+  "药": {
+    "spreadsheet_id": "1kEjlpz2cenwS9P-VfFEVZqC1yeZbJSYdMz9TFKAQOQE",
+    "url": "https://docs.google.com/spreadsheets/d/1kEjlpz2cenwS9P-VfFEVZqC1yeZbJSYdMz9TFKAQOQE",
+    "codes": [
+      "000915",
+      "000423",
+      "3613",
+      "600436",
+      "600993",
+      "600285",
+      "600750",
+      "000999",
+      "1093",
+      "002737",
+      "600566",
+      "600329",
+      "002262",
+      "000513",
+      "300294"
+    ]
+  },
+  "建材": {
+    "spreadsheet_id": "1GsHpzk06-vPt9kDh6dD1tfAqf84BobWAnbkT6S29VV4",
+    "url": "https://docs.google.com/spreadsheets/d/1GsHpzk06-vPt9kDh6dD1tfAqf84BobWAnbkT6S29VV4",
+    "codes": [
+      "002233",
+      "00914",
+      "002372",
+      "600970",
+      "000786",
+      "600031"
+    ]
+  },
+  "租赁物业": {
+    "spreadsheet_id": "1C54Wc-6QEsK80-pdWASKPyRoOmNRzCpu_2VmDm9VpMc",
+    "url": "https://docs.google.com/spreadsheets/d/1C54Wc-6QEsK80-pdWASKPyRoOmNRzCpu_2VmDm9VpMc",
+    "codes": [
+      "2869",
+      "2602"
+    ]
+  },
+  "家电": {
+    "spreadsheet_id": "1UcSHp40nyNRcpe_jofH6g2oWy_fFU1F8DKjf_w_oFT8",
+    "url": "https://docs.google.com/spreadsheets/d/1UcSHp40nyNRcpe_jofH6g2oWy_fFU1F8DKjf_w_oFT8",
+    "codes": [
+      "002032",
+      "688169",
+      "603195",
+      "603515"
+    ]
+  },
+  "汽车": {
+    "spreadsheet_id": "100LHzykrulKYOSwZhjOwAIir5FjntN45O_thcXos3O8",
+    "url": "https://docs.google.com/spreadsheets/d/100LHzykrulKYOSwZhjOwAIir5FjntN45O_thcXos3O8",
+    "codes": [
+      "601717",
+      "600741"
+    ]
+  },
+  "教育": {
+    "spreadsheet_id": "1iFsS047_Q5SP9ijrKIl6QT93y6-lqDthTRC1lGitHQk",
+    "url": "https://docs.google.com/spreadsheets/d/1iFsS047_Q5SP9ijrKIl6QT93y6-lqDthTRC1lGitHQk",
+    "codes": []
+  },
+  "设备": {
+    "spreadsheet_id": "1CHoPtKocyOtFCi5o2m3rHvYtNdv4JGTu9M2wvTPYpBg",
+    "url": "https://docs.google.com/spreadsheets/d/1CHoPtKocyOtFCi5o2m3rHvYtNdv4JGTu9M2wvTPYpBg",
+    "codes": [
+      "600894"
+    ]
+  },
+  "交通运输": {
+    "spreadsheet_id": "1Z0Zs-JC0h63yhJ5mfKqtwfaHKTigPng6W4He7dYc5QA",
+    "url": "https://docs.google.com/spreadsheets/d/1Z0Zs-JC0h63yhJ5mfKqtwfaHKTigPng6W4He7dYc5QA",
+    "codes": [
+      "600897",
+      "0144"
+    ]
+  },
+  "SAAS": {
+    "spreadsheet_id": "12PscMVZfOsaDXhgWtoRc-UPUgGOWZSxCL72a3ALZ7pg",
+    "url": "https://docs.google.com/spreadsheets/d/12PscMVZfOsaDXhgWtoRc-UPUgGOWZSxCL72a3ALZ7pg",
+    "codes": [
+      "INTU",
+      "2858",
+      "ADP",
+      "SPGI"
+    ]
+  },
+  "金融": {
+    "spreadsheet_id": "13sSzXpNWrc0Rzjsq5bHcsop7r3vhrCdpVZ3CPUbGqTQ",
+    "url": "https://docs.google.com/spreadsheets/d/13sSzXpNWrc0Rzjsq5bHcsop7r3vhrCdpVZ3CPUbGqTQ",
+    "codes": [
+      "FUTU",
+      "1606",
+      "600926",
+      "601838"
+    ]
+  }
+}
