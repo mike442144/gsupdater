@@ -13,6 +13,7 @@ Also writes Payout Ratio formulas (`DPS / Basic EPS`) and copies Key Stats formu
 **Single file:**
 ```bash
 python update_financials.py path/to/CIQ_file.xls "公司财务"
+python update_financials.py path/to/CIQ_file.xls "公司财务" --spreadsheet-id <ID>  # target specific spreadsheet
 ```
 
 **Batch mode** (routes files by stock code using `industry_spreadsheets.json`):
@@ -66,3 +67,32 @@ Paths hardcoded in the scripts:
 | Default spreadsheet | `1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0` |
 
 Override the spreadsheet with `--sheet-id` (扣非) or `--spreadsheets` (batch financials).
+
+### `create_company_tab.py` — Create new company tab from scratch
+
+Builds a new company tab in Google Sheets from CIQ Excel files — no template copy needed:
+1. Fills section headers (Key Stats, IS, BS, CF) and item names in column B
+2. Creates year headers (2007 to current year), LTM, and quarterly columns
+3. Writes Key Stats formulas by resolving item names to row numbers
+4. Adds company to the Summary sheet
+
+```bash
+python create_company_tab.py --code 600660 --name "福耀玻璃" --excel /path/to/CIQ_file.xls
+```
+
+**Usage flow:**
+```bash
+# Step 1: Create tab with structure and formulas
+python create_company_tab.py --code 600660 --name "福耀玻璃" --excel file.xls
+
+# Step 2: Fill financial data
+python update_financials.py file.xls "福耀玻璃财务" --spreadsheet-id <ID>
+
+# Step 3 (optional): Update 扣非净利润
+python update_kcfjcxsyjlr.py --codes 600660 --sheet-id <ID>
+```
+
+**Formula templates** in `create_company_tab.py` include ROIC (with tax rate adjustment and two-year average capital base), ROE, margins, coverage ratios, and FCFF. ROIC formula follows the pattern:
+```
+ROIC = EBIT × (1 - Tax Rate) / (Net Debt + Common Equity + Minority Interest + Previous Year values) × 2
+```

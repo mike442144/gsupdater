@@ -133,7 +133,7 @@ def read_excel_sheet(wb, sheet_name):
 
     # Parse data columns
     col_info = []  # list of (excel_col_idx, year, is_ltm, display_label)
-    for j in range(1, min(sheet.ncols, 4)):
+    for j in range(1, sheet.ncols):
         year, is_ltm, label = extract_header_info(header_values[j])
         if year:
             col_info.append((j, year, is_ltm, label))
@@ -384,7 +384,7 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
             first = str(row[0]).strip().lower() if row[0] else ''
             if first == excel_sheet.lower():
                 hdr = [s.cell_value(i+1, j) for j in range(s.ncols)]
-                for j in range(1, min(s.ncols, 4)):
+                for j in range(1, s.ncols):
                     year, is_ltm, label = extract_header_info(hdr[j])
                     if year:
                         excel_col_plan.append((j, year, is_ltm, label))
@@ -762,6 +762,7 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Update financials from Excel to Google Sheets')
+    parser.add_argument('--spreadsheet-id', help='Google Spreadsheet ID (for single file mode)')
     parser.add_argument('--spreadsheets', help='Comma-separated list of spreadsheet IDs for batch mode')
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
     parser.add_argument('--batch', action='store_true', help='Batch process all files in directory')
@@ -783,4 +784,4 @@ if __name__ == '__main__':
             print(f"ERROR: File not found: {args.excel_path}")
             sys.exit(1)
 
-        process_excel_to_gs(args.excel_path, args.gs_sheet_name, dry_run=args.dry_run)
+        process_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
