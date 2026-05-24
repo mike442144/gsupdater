@@ -197,7 +197,13 @@ def get_sheet_names(service, spreadsheet_id):
 # ── Read Excel sections ──
 
 def read_excel_items(wb, sheet_name):
-    """Read item names from an Excel sheet's column B (after the header)."""
+    """Read item names from an Excel sheet's column A/B (after the header).
+
+    Preserves empty rows for visual grouping in the output.
+    Preserves text formatting (bold, italic) from Excel font.
+    Returns a list of (name, text_format) tuples — empty name means a blank row.
+    text_format is a dict with keys 'bold', 'italic' (bool).
+    """
     try:
         sheet = wb.sheet_by_name(sheet_name)
     except xlrd.XLRDError:
@@ -222,26 +228,40 @@ def read_excel_items(wb, sheet_name):
         else:
             break
 
-    # Read items
+    # Read items, preserving empty rows and text formatting
     exact_skip = {'filing date', 'restatement type', 'calculation type'}
+    section_headers = {'income statement', 'balance sheet', 'cash flow'}
     items = []
     for i in range(data_start, sheet.nrows):
-        name = ''
-        if sheet.cell_value(i, 0) and str(sheet.cell_value(i, 0)).strip():
-            name = str(sheet.cell_value(i, 0)).strip()
-        elif sheet.cell_value(i, 1) and str(sheet.cell_value(i, 1)).strip():
-            name = str(sheet.cell_value(i, 1)).strip()
-        else:
+        col_a = str(sheet.cell_value(i, 0)).strip() if sheet.cell_value(i, 0) else ''
+        col_b = str(sheet.cell_value(i, 1)).strip() if sheet.cell_value(i, 1) else ''
+
+        # Stop at next section header in column A
+        if col_a.lower() in section_headers:
+            break
+
+        if col_a and col_a.lower() in exact_skip:
+            continue
+        if col_a.upper() in ('ASSETS', 'LIABILITIES', 'EQUITY'):
             continue
 
-        if name.upper() in ('ASSETS', 'LIABILITIES', 'EQUITY'):
-            continue
-        if name.lower() in exact_skip:
-            continue
-        if not name.strip():
-            continue
+        # Determine source column and extract formatting
+        use_col = 0 if col_a else 1
+        name = col_a if col_a else col_b
 
-        items.append(name)
+        text_format = {'bold': False, 'italic': False}
+        if name:  # skip empty rows
+            xf_idx = sheet.cell_xf_index(i, use_col)
+            xf = wb.xf_list[xf_idx]
+            font = wb.font_list[xf.font_index]
+            text_format['bold'] = font.weight >= 700
+            text_format['italic'] = font.italic
+
+        items.append((name, text_format))
+
+    # Trim trailing empty rows
+    while items and items[-1][0] == '':
+        items.pop()
 
     return items
 
@@ -348,7 +368,7 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
     print(f"  Fiscal year end: {fy_month}/{fy_day} ({'natural' if is_natural else 'non-natural'})")
 
     # Read Excel items
-    wb = xlrd.open_workbook(excel_path)
+    wb = xlrd.open_workbook(excel_path, formatting_info=True)
     is_items = read_excel_items(wb, 'Income Statement')
     bs_items = read_excel_items(wb, 'Balance Sheet')
     cf_items = read_excel_items(wb, 'Cash Flow')
@@ -367,6 +387,9 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
     else:
         ks_items = list(KEY_STATS_ITEMS)
 
+    # Convert Key Stats items to (name, text_format) tuples for uniform handling
+    ks_items_tuples = [(name, {'bold': False, 'italic': False}) for name in ks_items]
+
     # ── Calculate row positions ──
     # Row 1: headers
     # Row 2: "Key Stats" (A2)
@@ -377,8 +400,8 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
     current_row = 1  # 0-indexed: row 0 = headers
 
     # Key Stats: A1 (0-indexed) = "Key Stats", items start at row 2
-    sections.append(('Key Stats', 1, ks_items))  # (header, row_0idx, items)
-    current_row = 1 + 1 + len(ks_items)  # header + items
+    sections.append(('Key Stats', 1, ks_items_tuples))  # (header, row_0idx, items)
+    current_row = 1 + 1 + len(ks_items_tuples)  # header + items
 
     # Blank row + Income Statement
     sections.append(('', current_row, []))  # blank
@@ -443,7 +466,26 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
         # Items in B
         if items:
             item_requests = []
-            for i, item_name in enumerate(items):
+            for i, item in enumerate(items):
+                # Handle both tuple (name, text_format) and plain string
+                if isinstance(item, tuple):
+                    item_name, text_format = item
+                else:
+                    item_name = item
+                    text_format = {'bold': False, 'italic': False}
+
+                cell_value = {'userEnteredValue': {'stringValue': item_name}}
+                fields = 'userEnteredValue'
+
+                if text_format.get('bold') or text_format.get('italic'):
+                    fmt = {}
+                    if text_format.get('bold'):
+                        fmt['bold'] = True
+                    if text_format.get('italic'):
+                        fmt['italic'] = True
+                    cell_value['userEnteredFormat'] = {'textFormat': fmt}
+                    fields += ',userEnteredFormat'
+
                 item_requests.append({
                     'updateCells': {
                         'range': {
@@ -453,8 +495,8 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                             'startColumnIndex': 1,
                             'endColumnIndex': 2,
                         },
-                        'rows': [{'values': [{'userEnteredValue': {'stringValue': item_name}}]}],
-                        'fields': 'userEnteredValue',
+                        'rows': [{'values': [cell_value]}],
+                        'fields': fields,
                     }
                 })
             if item_requests:
@@ -884,7 +926,7 @@ def main():
         is_items = read_excel_items(wb, 'Income Statement')
         bs_items = read_excel_items(wb, 'Balance Sheet')
         cf_items = read_excel_items(wb, 'Cash Flow')
-        print(f"Excel: IS={len(is_items or [])}, BS={len(bs_items or [])}, CF={len(cf_items or [])} items")
+        print(f"Excel: IS={len(is_items or [])}, BS={len(bs_items or [])}, CF={len(cf_items or [])} items (with formatting)")
         print(f"Key Stats: will copy from first available GS tab")
         print("[DRY RUN] No changes made")
         return 0, 200
