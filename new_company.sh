@@ -54,7 +54,7 @@ echo "========================================"
 # Step 1: Create tab structure with Key Stats formulas
 echo ""
 echo ">>> Step 1: Creating tab structure..."
-python "$SCRIPT_DIR/create_company_tab.py" \
+python3 "$SCRIPT_DIR/create_company_tab.py" \
     --code "$CODE" \
     --name "$NAME" \
     --sheet-suffix "$SHEET_SUFFIX" \
@@ -62,7 +62,7 @@ python "$SCRIPT_DIR/create_company_tab.py" \
 
 # Resolve spreadsheet ID if not provided
 if [[ -z "$SPREADSHEET_ID" ]]; then
-    SPREADSHEET_ID=$(python -c "
+    SPREADSHEET_ID=$(python3 -c "
 import json, sys
 sys.path.insert(0, '$SCRIPT_DIR')
 # extract industry from code mapping in industry_spreadsheets.json
@@ -81,7 +81,7 @@ fi
 # Step 2: Fill financial data
 echo ""
 echo ">>> Step 2: Filling financial data..."
-python "$SCRIPT_DIR/update_financials.py" \
+python3 "$SCRIPT_DIR/update_financials.py" \
     "$EXCEL" \
     "$SHEET_NAME" \
     --spreadsheet-id "$SPREADSHEET_ID"
@@ -93,7 +93,7 @@ if [[ "$SKIP_KOUFEI" == true ]]; then
 else
     echo ""
     echo ">>> Step 3: Updating 扣非净利润..."
-    python "$SCRIPT_DIR/update_kcfjcxsyjlr.py" \
+    python3 "$SCRIPT_DIR/update_kcfjcxsyjlr.py" \
         --codes "$CODE" \
         --sheet-id "$SPREADSHEET_ID"
 fi
