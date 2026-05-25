@@ -19,16 +19,16 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, '/home/mike/.hermes/hermes-agent')
+sys.path.insert(0, os.path.expanduser('~/.hermes/hermes-agent'))
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # Configuration
 GOOGLE_SHEET_ID = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
-GOOGLE_TOKEN_PATH = "/home/mike/.hermes/google_token.json"
-EASTMONEY_SCRIPT = "/home/mike/projects/tinyant/eastmoney/index.js"
-EASTMONEY_DIR = "/home/mike/projects/tinyant/eastmoney"
+GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
+EASTMONEY_SCRIPT = os.path.join(os.path.expanduser('~/projects/tinyant/eastmoney'), 'index.js')
+EASTMONEY_DIR = os.path.expanduser('~/projects/tinyant/eastmoney')
 
 
 def col_to_letter(col_idx):

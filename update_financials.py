@@ -11,7 +11,7 @@ import re
 import json
 import argparse
 
-sys.path.insert(0, '/home/mike/.hermes/hermes-agent')
+sys.path.insert(0, os.path.expanduser('~/.hermes/hermes-agent'))
 
 import xlrd
 from datetime import datetime, timedelta
@@ -22,7 +22,7 @@ from googleapiclient.discovery import build
 # ── Configuration ──────────────────────────────────────────────────────────
 
 GOOGLE_SHEET_ID = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
-GOOGLE_TOKEN_PATH = "/home/mike/.hermes/google_token.json"
+GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 
 SECTION_MAP = {
     "Income Statement": "Income Statement",

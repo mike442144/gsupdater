@@ -23,12 +23,12 @@ import xlrd
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, '/home/mike/.hermes/hermes-agent')
+sys.path.insert(0, os.path.expanduser('~/.hermes/hermes-agent'))
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-GOOGLE_TOKEN_PATH = "/home/mike/.hermes/google_token.json"
+GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 
 # ── Key Stats item names ──
 KEY_STATS_ITEMS = [
