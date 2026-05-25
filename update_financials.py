@@ -99,7 +99,7 @@ def extract_header_info(header_str):
         year = match.group(1)
         if is_ltm:
             return year, True, s
-        return year, False, year
+        return year, False, s
 
     return None, is_ltm, s
 
@@ -439,9 +439,12 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
         for i in range(a, search_end):
             gs_j, gs_year = gs_cols[i]
             if gs_year == year:
-                # Verify it's a pure year or LTM header, not a quarter header
+                # Verify it's a pure year, LTM, fiscal year header, or empty
                 hdr_val = str(gs_header[gs_j]).strip()
-                if re.match(r'^\d{4}$', hdr_val) or re.search(r'LTM', hdr_val, re.IGNORECASE) or not hdr_val:
+                if (re.match(r'^\d{4}$', hdr_val)
+                    or re.search(r'LTM', hdr_val, re.IGNORECASE)
+                    or re.match(r'^12 months\s', hdr_val)
+                    or not hdr_val):
                     plan_col_to_gs_col[excel_col_idx] = gs_j
                     if gs_header[gs_j] != label:
                         header_updates.append((gs_j, label))
