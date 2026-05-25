@@ -631,6 +631,202 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
           f"{total_updates} cells {'would be ' if dry_run else ''}written")
     print(f"{'='*60}")
 
+    # Update Capital Structure Details from Excel
+    if not dry_run:
+        update_capital_structure_details(wb, service, spreadsheet_id, gs_sheet_name)
+
+
+# ── Capital Structure Details ──────────────────────────────────────────────
+
+def update_capital_structure_details(wb, service, spreadsheet_id, gs_sheet_name):
+    """Read Capital Structure Details from Excel and write to GS 资本结构 tab.
+
+    If Excel doesn't have the tab, skip. If multiple FY sections exist, use the latest one.
+    Delete existing rows for this company in GS first, then insert new data.
+    """
+    EXCEL_TAB_NAME = "Capital Structure Details"
+    GS_TAB_NAME = "资本结构"
+
+    # Check if Excel has the tab
+    try:
+        sheet = wb.sheet_by_name(EXCEL_TAB_NAME)
+    except xlrd.XLRDError:
+        return  # Skip if tab doesn't exist
+
+    if sheet.nrows < 5:
+        return
+
+    # Extract company Chinese name from gs_sheet_name (e.g. "福耀玻璃财务" -> "福耀玻璃")
+    company_name = gs_sheet_name.replace("财务", "")
+
+    # Find all FY sections in the Excel tab
+    # Each section starts with a row containing "FY" in col 0 (e.g. "FY 2025 (Dec-31-2025) Capital Structure...")
+    sections = []
+    for i in range(sheet.nrows):
+        val = str(sheet.cell_value(i, 0)).strip()
+        if val.startswith("FY ") and "Capital Structure" in val:
+            sections.append(i)
+
+    if not sections:
+        print("  Capital Structure Details: no FY sections found, skipping")
+        return
+
+    # Use the latest (last) section
+    latest_start = sections[-1]
+    print(f"  Capital Structure Details: found {len(sections)} FY sections, using latest (row {latest_start + 1})")
+
+    # Find the column header row (row with "Description", "Type", etc.)
+    hdr_row = None
+    for i in range(latest_start, min(latest_start + 5, sheet.nrows)):
+        row_vals = [str(sheet.cell_value(i, j)).strip().lower() for j in range(min(sheet.ncols, 10))]
+        if "description" in row_vals:
+            hdr_row = i
+            break
+
+    if hdr_row is None:
+        print("  Capital Structure Details: no header row found, skipping")
+        return
+
+    # Collect data rows until empty row or next FY section
+    data_rows = []
+    for i in range(hdr_row + 1, sheet.nrows):
+        col_a = str(sheet.cell_value(i, 0)).strip()
+        if not col_a:
+            # Stop at first empty row after data
+            if not data_rows:
+                continue  # skip leading empty rows
+            break
+        if col_a.startswith("FY "):
+            break  # next section
+
+        # Collect columns 0-8 from Excel (Description through Convertible), total 9 cols
+        row_data = [col_a]  # Description is col A in Excel
+        for j in range(1, 9):
+            if j < sheet.ncols:
+                row_data.append(_format_excel_value(sheet.cell_value(i, j)))
+            else:
+                row_data.append('')
+        data_rows.append(row_data)
+
+    if not data_rows:
+        print("  Capital Structure Details: no data rows found, skipping")
+        return
+
+    print(f"  Capital Structure Details: {len(data_rows)} data rows from Excel")
+
+    # Build the full GS row: [company_name, col0, col1, ..., col8]
+    gs_rows = []
+    for row in data_rows:
+        gs_rows.append([company_name] + row)
+
+    # Read existing 资本结构 tab data with grid info to get actual row positions
+    gs_meta = service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        ranges=f"{GS_TAB_NAME}!A1:J10000",
+        includeGridData=True
+    ).execute()
+
+    existing_values = []
+    last_data_row = 0
+    for sheet_data in gs_meta.get('sheets', []):
+        row_data = sheet_data.get('data', [{}])[0].get('rowData', [])
+        for i, row in enumerate(row_data):
+            actual_row = i + 1
+            cells = row.get('values', [])
+            row_vals = []
+            for cell in cells:
+                row_vals.append(cell.get('formattedValue', ''))
+            # Pad to 10 columns
+            while len(row_vals) < 10:
+                row_vals.append('')
+            existing_values.append(row_vals)
+            if any(v for v in row_vals):
+                last_data_row = actual_row
+
+    # Find row indices (1-based for API) where column A matches company_name
+    rows_to_delete = []
+    for i, row in enumerate(existing_values):
+        if row and len(row) > 0 and str(row[0]).strip() == company_name:
+            rows_to_delete.append(i + 1)
+
+    if rows_to_delete:
+        print(f"  Capital Structure Details: deleting {len(rows_to_delete)} existing rows for {company_name}")
+        # Delete from bottom to top to preserve row indices
+        for row_idx in reversed(rows_to_delete):
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={'requests': [{
+                    'deleteDimension': {
+                        'range': {
+                            'sheetId': _get_sheet_id(service, spreadsheet_id, GS_TAB_NAME),
+                            'dimension': 'ROWS',
+                            'startIndex': row_idx - 1,
+                            'endIndex': row_idx,
+                        }
+                    }
+                }]}
+            ).execute()
+
+        # Re-read the sheet to find the actual last data row after deletion
+        gs_meta2 = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            ranges=f"{GS_TAB_NAME}!A1:J10000",
+            includeGridData=True
+        ).execute()
+        last_data_row = 0
+        for sheet_data in gs_meta2.get('sheets', []):
+            row_data = sheet_data.get('data', [{}])[0].get('rowData', [])
+            for i, row in enumerate(row_data):
+                actual_row = i + 1
+                cells = row.get('values', [])
+                row_vals = [c.get('formattedValue', '') for c in cells]
+                while len(row_vals) < 10:
+                    row_vals.append('')
+                if any(v for v in row_vals):
+                    last_data_row = actual_row
+
+    # Append after the last row with data
+    first_data_row = last_data_row if last_data_row > 0 else 1
+
+    print(f"  Capital Structure Details: writing {len(gs_rows)} rows starting at row {first_data_row + 1}")
+
+    # Write data rows
+    update_range = f"{GS_TAB_NAME}!A{first_data_row + 1}:J{first_data_row + len(gs_rows)}"
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=update_range,
+        valueInputOption='RAW',
+        body={'values': gs_rows}
+    ).execute()
+
+
+def _get_sheet_id(service, spreadsheet_id, sheet_name):
+    """Get the numeric sheetId for a given sheet name."""
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    for sheet in meta.get('sheets', []):
+        if sheet['properties']['title'] == sheet_name:
+            return sheet['properties']['sheetId']
+    raise ValueError(f"Sheet '{sheet_name}' not found")
+
+
+def _format_excel_value(val):
+    """Clean up an Excel cell value for GS display.
+
+    Converts Excel serial dates (float > 30000) to date strings like 'Dec-31-2025'.
+    """
+    if val is None or val == '':
+        return ''
+    if isinstance(val, float) and val > 30000 and val < 100000:
+        # Excel serial date
+        try:
+            dt = datetime(1899, 12, 30) + timedelta(days=int(val))
+            return dt.strftime('%b-%d-%Y').upper()
+        except (ValueError, OverflowError):
+            pass
+    if isinstance(val, float) and val == int(val):
+        return str(int(val))
+    return str(val).strip()
+
 
 # ── Build Mapping from Summary Sheet ──────────────────────────────────────
 
