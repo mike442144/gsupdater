@@ -51,15 +51,6 @@ echo "  Sheet: $SHEET_NAME"
 echo "  Excel: $EXCEL"
 echo "========================================"
 
-# Step 1: Create tab structure with Key Stats formulas
-echo ""
-echo ">>> Step 1: Creating tab structure..."
-python3 "$SCRIPT_DIR/create_company_tab.py" \
-    --code "$CODE" \
-    --name "$NAME" \
-    --sheet-suffix "$SHEET_SUFFIX" \
-    --excel "$EXCEL"
-
 # Resolve spreadsheet ID if not provided
 if [[ -z "$SPREADSHEET_ID" ]]; then
     SPREADSHEET_ID=$(python3 -c "
@@ -77,6 +68,16 @@ print('1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0')
 ")
     echo "  Resolved spreadsheet ID: $SPREADSHEET_ID"
 fi
+
+# Step 1: Create tab structure with Key Stats formulas
+echo ""
+echo ">>> Step 1: Creating tab structure..."
+python3 "$SCRIPT_DIR/create_company_tab.py" \
+    --code "$CODE" \
+    --name "$NAME" \
+    --sheet-suffix "$SHEET_SUFFIX" \
+    --excel "$EXCEL" \
+    --spreadsheet-id "$SPREADSHEET_ID"
 
 # Step 2: Fill financial data
 echo ""
