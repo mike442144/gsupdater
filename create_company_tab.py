@@ -303,7 +303,7 @@ def get_key_stats_from_gs(service, spreadsheet_id, template_name):
     """Get Key Stats item names from an existing tab."""
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"{template_name}!A1:A30"
+        range=f"{template_name}!A1:B30"
     ).execute()
     rows = result.get('values', [])
 
@@ -887,8 +887,72 @@ def write_payout_ratio_formula(service, spreadsheet_id, sheet_name, target_sheet
         print(f"  ✓ Wrote {len(requests)} Payout Ratio formulas")
 
 
+def classify_exchange(code):
+    """Classify a stock code by exchange.
+
+    Returns 'SSE' (上交所), 'SZSE' (深交所), 'HKEX' (港交所), or None.
+    """
+    s = str(code).strip()
+    if not s.isdigit():
+        return None
+    if len(s) == 6:
+        if s[:3] in ('600', '601', '603', '605', '688', '689', '900'):
+            return 'SSE'
+        if s[0] in ('0', '3') or s[:3] == '200':
+            return 'SZSE'
+    if 1 <= len(s) <= 5:
+        return 'HKEX'
+    return None
+
+
+def copy_summary_column_formulas(service, spreadsheet_id, summary_sheet_id,
+                                  src_col_0idx, dst_col_0idx):
+    """Copy formulas/format from src col rows 3+ to dst col on Summary.
+
+    Self-relative refs (e.g. F$2) auto-shift to the destination column.
+    """
+    src_letter = col_to_letter(src_col_0idx)
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f'Summary!{src_letter}3:{src_letter}1000'
+    ).execute()
+    src_values = result.get('values', [])
+    while src_values and (not src_values[-1] or not str(src_values[-1][0]).strip()):
+        src_values.pop()
+    if not src_values:
+        print(f"  Source column {src_letter} empty below row 2, skipping formula copy")
+        return
+
+    last_row_excl = 2 + len(src_values)  # 0-indexed exclusive end
+    requests = [{
+        'copyPaste': {
+            'source': {
+                'sheetId': summary_sheet_id,
+                'startRowIndex': 2,
+                'endRowIndex': last_row_excl,
+                'startColumnIndex': src_col_0idx,
+                'endColumnIndex': src_col_0idx + 1,
+            },
+            'destination': {
+                'sheetId': summary_sheet_id,
+                'startRowIndex': 2,
+                'endRowIndex': last_row_excl,
+                'startColumnIndex': dst_col_0idx,
+                'endColumnIndex': dst_col_0idx + 1,
+            },
+            'pasteType': 'PASTE_NORMAL',
+            'pasteOrientation': 'NORMAL',
+        }
+    }]
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id, body={'requests': requests}
+    ).execute()
+    dst_letter = col_to_letter(dst_col_0idx)
+    print(f"  ✓ Cloned formulas Summary!{src_letter} → {dst_letter} (rows 3-{last_row_excl})")
+
+
 def add_to_summary(service, spreadsheet_id, code, name):
-    """Add company to Summary sheet."""
+    """Add company to Summary sheet and clone formulas from a same-exchange column."""
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range='Summary!A1:AZ2'
@@ -912,6 +976,34 @@ def add_to_summary(service, spreadsheet_id, code, name):
         body={'values': [[code], [name]]}
     ).execute()
     print(f"  ✓ Added {code} ({name}) to Summary column {col_to_letter(next_col)}")
+
+    exchange = classify_exchange(code)
+    if exchange is None:
+        print(f"  Exchange not identified for code {code}, skipping formula clone")
+        return
+
+    codes_row = rows[0] if rows else []
+    src_col = None
+    for j, c in enumerate(codes_row):
+        if j == next_col:
+            continue
+        if classify_exchange(c) == exchange:
+            src_col = j
+            break
+
+    if src_col is None:
+        print(f"  No existing {exchange} column to clone from, skipping formula clone")
+        return
+
+    sheets = get_sheet_names(service, spreadsheet_id)
+    summary_sheet_id = sheets.get('Summary', {}).get('sheetId')
+    if summary_sheet_id is None:
+        print("  WARNING: Summary sheet not found")
+        return
+
+    copy_summary_column_formulas(
+        service, spreadsheet_id, summary_sheet_id, src_col, next_col
+    )
 
 
 def get_spreadsheet_id_for_code(code):

@@ -47,12 +47,17 @@ def normalize_name(name):
 
 
 def serial_to_year(serial):
-    """Convert Excel serial date to year."""
+    """Convert Excel serial date to fiscal year string.
+
+    CIQ quirk: a Jan-01-YYYY date represents FY (YYYY-1) — the fiscal year
+    ended one day before. Roll back so matching lines up with the GS column.
+    """
     try:
         s = float(serial)
         if 30000 < s < 70000:
             dt = datetime(1899, 12, 30) + timedelta(days=int(s))
-            return str(dt.year)
+            yr = dt.year - 1 if (dt.month == 1 and dt.day == 1) else dt.year
+            return str(yr)
     except (ValueError, TypeError, OverflowError):
         pass
     return None
@@ -60,7 +65,7 @@ def serial_to_year(serial):
 
 def extract_header_info(header_str):
     """Extract (year, is_ltm, label) from Excel header.
-    
+
     Returns:
         (year_str_or_None, is_ltm_bool, display_label)
     """
@@ -75,7 +80,20 @@ def extract_header_info(header_str):
 
     is_ltm = 'LTM' in s.upper()
 
-    # Find 4-digit year
+    # Parse full Mmm-DD-YYYY date first — same Jan-01 rollback as serial_to_year
+    date_match = re.search(r'([A-Z][a-z]{2})-(\d{2})-(\d{4})', s)
+    if date_match:
+        month_str = date_match.group(1)
+        day = int(date_match.group(2))
+        yr = int(date_match.group(3))
+        if month_str == 'Jan' and day == 1:
+            yr -= 1
+        year = str(yr)
+        if is_ltm:
+            return year, True, s
+        return year, False, year
+
+    # Fallback: any 4-digit year (e.g., "Q1 2024")
     match = re.search(r'(\d{4})', s)
     if match:
         year = match.group(1)
@@ -855,14 +873,19 @@ def build_mapping_from_summary(service, spreadsheet_id, summary_sheet='Summary')
 
 def extract_code_from_filename(filename):
     base = os.path.splitext(filename)[0]
-    match = re.search(r'(?:SHSE|SZSE|SSE|HKEX|NYSE|NASDAQ)\s+(\d+)', base, re.IGNORECASE)
+    # Match "<EXCHANGE> <digits>" — CIQ format. SEHK/HKEX → pad to 4 digits
+    # so Summary codes like '0144' match filename '144'.
+    match = re.search(r'(SHSE|SZSE|SSE|HKEX|SEHK|NYSE|NASDAQ)\s+(\d+)', base, re.IGNORECASE)
     if match:
-        return match.group(1)
+        ex, num = match.group(1).upper(), match.group(2)
+        if ex in ('HKEX', 'SEHK'):
+            return num.zfill(4)
+        return num
     matches = re.findall(r'\b(\d{4,6})\b', base)
     if matches:
         return matches[-1]
     # Ticker: skip exchange names, find last uppercase 2-5 char token
-    exchange_names = {'SHSE', 'SZSE', 'SSE', 'HKEX', 'NYSE', 'NASDAQ'}
+    exchange_names = {'SHSE', 'SZSE', 'SSE', 'HKEX', 'SEHK', 'NYSE', 'NASDAQ'}
     ticker_matches = re.findall(r'\b([A-Z]{2,5})\b', base)
     tickers = [t for t in ticker_matches if t not in exchange_names]
     if tickers:

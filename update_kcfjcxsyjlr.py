@@ -2,7 +2,7 @@
 """
 Update 扣非净利润 (non-recurring net profit) for A-share companies in Google Sheets.
 
-Data source: eastmoney API via ~/projects/tinyant/eastmoney/index.js
+Data source: eastmoney API via ~/Projects/tinyant/eastmoney/index.js
 
 Tasks:
 1. Fill annual 扣非净利润 in yearly columns (2024, 2025, etc.)
@@ -27,8 +27,8 @@ from googleapiclient.discovery import build
 # Configuration
 GOOGLE_SHEET_ID = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
 GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
-EASTMONEY_SCRIPT = os.path.join(os.path.expanduser('~/projects/tinyant/eastmoney'), 'index.js')
-EASTMONEY_DIR = os.path.expanduser('~/projects/tinyant/eastmoney')
+EASTMONEY_SCRIPT = os.path.join(os.path.expanduser('~/Projects/tinyant/eastmoney'), 'index.js')
+EASTMONEY_DIR = os.path.expanduser('~/Projects/tinyant/eastmoney')
 
 
 def col_to_letter(col_idx):
