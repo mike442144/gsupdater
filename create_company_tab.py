@@ -614,8 +614,9 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
         ).execute()
         print(f"  ✓ Wrote {len(header_requests)} header cells")
 
-    # 4. Set column widths
-    width_requests = [
+    # 4. Set column widths and frozen panes
+    requests = [
+        # Column widths: A=20, B=80, C=80, D=40
         {
             'updateDimensionProperties': {
                 'range': {
@@ -624,7 +625,7 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                     'startIndex': 0,
                     'endIndex': 1,
                 },
-                'properties': {'pixelSize': 250},
+                'properties': {'pixelSize': 20},
                 'fields': 'pixelSize',
             }
         },
@@ -636,14 +637,51 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                     'startIndex': 1,
                     'endIndex': 2,
                 },
-                'properties': {'pixelSize': 400},
+                'properties': {'pixelSize': 80},
                 'fields': 'pixelSize',
+            }
+        },
+        {
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': target_sheet_id,
+                    'dimension': 'COLUMNS',
+                    'startIndex': 2,
+                    'endIndex': 3,
+                },
+                'properties': {'pixelSize': 80},
+                'fields': 'pixelSize',
+            }
+        },
+        {
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': target_sheet_id,
+                    'dimension': 'COLUMNS',
+                    'startIndex': 3,
+                    'endIndex': 4,
+                },
+                'properties': {'pixelSize': 40},
+                'fields': 'pixelSize',
+            }
+        },
+        # Freeze first 4 columns and first row (headers)
+        {
+            'updateSheetProperties': {
+                'properties': {
+                    'sheetId': target_sheet_id,
+                    'gridProperties': {
+                        'frozenColumnCount': 4,
+                        'frozenRowCount': 1,
+                    },
+                },
+                'fields': 'gridProperties.frozenColumnCount,gridProperties.frozenRowCount',
             }
         },
     ]
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
-        body={'requests': width_requests}
+        body={'requests': requests}
     ).execute()
 
     return target_sheet_id, total_cols

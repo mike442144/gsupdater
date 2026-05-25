@@ -4,6 +4,22 @@ Tools for syncing financial data into Google Sheets from two sources.
 
 ## Scripts
 
+### `new_company.sh` — Full flow for creating a new company tab
+
+Orchestrates the complete workflow to create a new company tab from scratch:
+1. Creates tab structure with `create_company_tab.py` (headers, items, Key Stats formulas)
+2. Fills financial data with `update_financials.py` (IS, BS, CF values)
+3. Updates 扣非净利润 with `update_kcfjcxsyjlr.py` (A-share only)
+
+```bash
+./new_company.sh --code 600660 --name "福耀玻璃" --excel /path/to/CIQ_file.xls
+```
+
+Options:
+- `--spreadsheet-id <ID>` — target a specific spreadsheet (auto-resolved from `industry_spreadsheets.json` if omitted)
+- `--skip-koufei` — skip step 3 (for non-A-share companies like HK/US listings)
+- `--sheet-suffix <suffix>` — customize the tab name suffix (default: `财务`)
+
 ### `update_financials.py` — CIQ Excel → Google Sheets
 
 Reads Capital IQ Excel files (`.xls`/`.xlsx`) and writes Income Statement, Balance Sheet, and Cash Flow data into the corresponding Google Sheets. Matches rows by item name (column B), not row number, so sheet structure changes are handled safely.
@@ -80,7 +96,9 @@ Builds a new company tab in Google Sheets from CIQ Excel files — no template c
 python create_company_tab.py --code 600660 --name "福耀玻璃" --excel /path/to/CIQ_file.xls
 ```
 
-**Usage flow:**
+**Recommended:** use `./new_company.sh` to run all steps in one command (see above).
+
+**Manual flow** (run each step individually):
 ```bash
 # Step 1: Create tab with structure and formulas
 python create_company_tab.py --code 600660 --name "福耀玻璃" --excel file.xls
