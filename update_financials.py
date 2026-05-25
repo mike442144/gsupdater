@@ -446,7 +446,9 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
                     or re.match(r'^12 months\s', hdr_val)
                     or not hdr_val):
                     plan_col_to_gs_col[excel_col_idx] = gs_j
-                    if gs_header[gs_j] != label:
+                    # Preserve fiscal year format if GS already has it
+                    is_fy_header = re.match(r'^12 months\s', hdr_val)
+                    if gs_header[gs_j] != label and not is_fy_header:
                         header_updates.append((gs_j, label))
                     print(f"  Excel col {excel_col_idx} year {year} ('{label}') → GS col {gs_j} ('{gs_header[gs_j]}') [match]")
                     a = i + 1
