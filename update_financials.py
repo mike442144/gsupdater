@@ -249,11 +249,39 @@ def read_gs_section(service, spreadsheet_id, sheet_name, section_header):
 
 def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, target_cols, target_sheet_id, grid_width):
     """Copy formulas from source column to target columns in Key Stats section.
-    Also copies numberFormat from source cell to preserve display format."""
+    Also copies numberFormat from source cell to preserve display format.
+    Dynamically finds the end of Key Stats section by scanning for section headers."""
+    # Find Key Stats section boundaries
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{sheet_name}'!A1:A60"
+    ).execute()
+    rows = result.get('values', [])
+
+    ks_start = None
+    ks_end = len(rows)
+    section_headers = ('income statement', 'balance sheet', 'cash flow',
+                       'key stats', 'supplemental', 'multiples', 'ratios',
+                       'segments', 'capitalization')
+
+    for i, row in enumerate(rows):
+        val = row[0].strip().lower() if row and row[0] else ''
+        if val == 'key stats':
+            ks_start = i
+        elif ks_start is not None and i > ks_start and val in section_headers:
+            ks_end = i
+            break
+
+    if ks_start is None:
+        print("  WARNING: Key Stats section not found, skipping formula copy")
+        return
+
+    # Use dynamic end row (1-indexed for range)
+    end_row = ks_end
     end_col_letter = col_to_letter(grid_width - 1)
     result = service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
-        ranges=[f"'{sheet_name}'!A2:{end_col_letter}26"],
+        ranges=[f"'{sheet_name}'!A2:{end_col_letter}{end_row}"],
         includeGridData=True
     ).execute()
 

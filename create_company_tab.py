@@ -65,6 +65,18 @@ KEY_STATS_SUPPLEMENTAL = [
     "Unearned Revenue/Revenue",
 ]
 
+# Key Stats sub-section headers (used as sub-group labels in column B)
+KEY_STATS_SUB_SECTIONS = ('盈利指标', '同比增速')
+
+# YoY growth items (new sub-section)
+YOY_ITEMS = [
+    "Revenue YoY",
+    "Gross Profit YoY",
+    "Operating Income YoY",
+    "Net Income YoY",
+    "扣非净利润 YoY",
+]
+
 # Formula templates
 FORMULA_TEMPLATES = {
     "Net Working Capital": {
@@ -157,6 +169,26 @@ FORMULA_TEMPLATES = {
     },
     "ROIC": {
         "formula": "=__C__{EBIT}*(1-__C__{Effective Tax Rate %})/(__C__{Net Debt}+__C__{Common Equity}+__C__{Minority Interest}+__PC__{Net Debt}+__PC__{Common Equity}+__PC__{Minority Interest})*2",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    "Revenue YoY": {
+        "formula": "=__C__{Total Revenue}/__PC__{Total Revenue}-1",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    "Gross Profit YoY": {
+        "formula": "=__C__{Gross Profit}/__PC__{Gross Profit}-1",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    "Operating Income YoY": {
+        "formula": "=__C__{Operating Income}/__PC__{Operating Income}-1",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    "Net Income YoY": {
+        "formula": "=__C__{Net Income to Company}/__PC__{Net Income to Company}-1",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    "扣非净利润 YoY": {
+        "formula": "=__C__{扣非净利润}/__PC__{扣非净利润}-1",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
 }
@@ -300,10 +332,14 @@ def detect_fiscal_year_end(excel_path):
 # ── Read Key Stats from existing GS tab ──
 
 def get_key_stats_from_gs(service, spreadsheet_id, template_name):
-    """Get Key Stats item names from an existing tab."""
+    """Get Key Stats item names from an existing tab.
+
+    Handles both old layout (items in column B) and new layout
+    (sub-section headers in B, items in column C).
+    """
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"{template_name}!A1:B30"
+        range=f"{template_name}!A1:C40"
     ).execute()
     rows = result.get('values', [])
 
@@ -317,21 +353,25 @@ def get_key_stats_from_gs(service, spreadsheet_id, template_name):
         print(f"  WARNING: Key Stats not found in {template_name}, using defaults")
         return list(KEY_STATS_ITEMS)
 
-    # Read items until next section header
     section_headers = ('income statement', 'balance sheet', 'cash flow',
                        'key stats', 'supplemental', 'multiples', 'ratios',
                        'segments', 'capitalization', 'business segments')
     items = []
     for i in range(key_stats_start + 1, len(rows)):
         row = rows[i]
-        if not row:
-            break
         b_val = row[1].strip() if len(row) > 1 and row[1] else ''
-        if not b_val:
+        c_val = row[2].strip() if len(row) > 2 and row[2] else ''
+
+        # Prefer column C (new layout with sub-sections), fall back to B
+        item_val = c_val if c_val else b_val
+
+        if not item_val:
             break
-        if b_val.lower() in section_headers:
+        if item_val.lower() in section_headers:
             break
-        items.append(b_val)
+        if item_val in KEY_STATS_SUB_SECTIONS:
+            continue
+        items.append(item_val)
 
     if not items:
         return list(KEY_STATS_ITEMS)
@@ -389,36 +429,58 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
 
     # Convert Key Stats items to (name, text_format) tuples for uniform handling
     ks_items_tuples = [(name, {'bold': False, 'italic': False}) for name in ks_items]
+    yoy_items_tuples = [(name, {'bold': False, 'italic': False}) for name in YOY_ITEMS]
 
     # ── Calculate row positions ──
-    # Row 1: headers
-    # Row 2: "Key Stats" (A2)
-    # Row 3-...: Key Stats items (B3 onwards)
-    # Then blank row, then "Income Statement", etc.
+    # Row 1 (0-idx): headers
+    # Row 2 (0-idx=1): "Key Stats" (A2)
+    # Row 3 (0-idx=2): "盈利指标" sub-header (B3)
+    # Row 4-N: Key Stats items (C4 onwards)
+    # Blank row
+    # "同比增速" sub-header (B)
+    # YoY items (C)
+    # Blank row, then "Income Statement", etc.
 
     sections = []
     current_row = 1  # 0-indexed: row 0 = headers
 
-    # Key Stats: A1 (0-indexed) = "Key Stats", items start at row 2
-    sections.append(('Key Stats', 1, ks_items_tuples))  # (header, row_0idx, items)
-    current_row = 1 + 1 + len(ks_items_tuples)  # header + items
+    # Key Stats: A2 = "Key Stats" (0-idx=1)
+    ks_row = 1
+    sections.append(('Key Stats', ks_row, []))  # header only, no items in tuple
+    current_row = ks_row + 1  # row 2 (0-idx)
+
+    # "盈利指标" sub-header + items in column C
+    sections.append(('', current_row, [('盈利指标', {'bold': True, 'italic': False})], 1))  # sub-header in B
+    current_row += 1  # items start here (row 3, 0-idx)
+    sections.append(('', current_row, ks_items_tuples, 2))  # items in C
+    current_row += len(ks_items_tuples)
+
+    # Blank row
+    sections.append(('', current_row, []))
+    current_row += 1
+
+    # "同比增速" sub-header + YoY items in column C
+    sections.append(('', current_row, [('同比增速', {'bold': True, 'italic': False})], 1))  # sub-header in B
+    current_row += 1
+    sections.append(('', current_row, yoy_items_tuples, 2))  # items in C
+    current_row += len(yoy_items_tuples)
 
     # Blank row + Income Statement
     sections.append(('', current_row, []))  # blank
     current_row += 1
-    sections.append(('Income Statement', current_row, is_items))
+    sections.append(('Income Statement', current_row, is_items, 1))
     current_row += 1 + len(is_items)
 
     # Blank + Balance Sheet
     sections.append(('', current_row, []))
     current_row += 1
-    sections.append(('Balance Sheet', current_row, bs_items))
+    sections.append(('Balance Sheet', current_row, bs_items, 1))
     current_row += 1 + len(bs_items)
 
     # Blank + Cash Flow
     sections.append(('', current_row, []))
     current_row += 1
-    sections.append(('Cash Flow', current_row, cf_items))
+    sections.append(('Cash Flow', current_row, cf_items, 1))
     current_row += 1 + len(cf_items)
 
     total_rows = current_row + 200  # extra buffer
@@ -446,8 +508,13 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
     # 2. Build cell writes
     requests = []
 
-    # Section headers (A column) and item names (B column)
-    for section_name, row_idx, items in sections:
+    # Section headers (A column) and item names (B or C column)
+    for section_tuple in sections:
+        section_name = section_tuple[0]
+        row_idx = section_tuple[1]
+        items = section_tuple[2]
+        item_col = section_tuple[3] if len(section_tuple) > 3 else 1
+
         # Section header in A
         if section_name:
             requests.append({
@@ -463,7 +530,7 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                     'fields': 'userEnteredValue',
                 }
             })
-        # Items in B
+        # Items in specified column (B=1 or C=2)
         if items:
             item_requests = []
             for i, item in enumerate(items):
@@ -492,8 +559,8 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                             'sheetId': target_sheet_id,
                             'startRowIndex': row_idx + 1 + i,
                             'endRowIndex': row_idx + 2 + i,
-                            'startColumnIndex': 1,
-                            'endColumnIndex': 2,
+                            'startColumnIndex': item_col,
+                            'endColumnIndex': item_col + 1,
                         },
                         'rows': [{'values': [cell_value]}],
                         'fields': fields,
@@ -688,17 +755,30 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
 
 
 def scan_item_to_row(service, spreadsheet_id, sheet_name):
-    """Scan column B to build item_name (lowercase) → 0-indexed row mapping."""
+    """Scan columns B and C to build item_name (lowercase) → 0-indexed row mapping.
+
+    For each row, prefers column C (Key Stats items in new layout with sub-sections),
+    falls back to column B (IS/BS/CF items and old layout).
+    Skips sub-section headers like "盈利指标" and "同比增速".
+    """
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"{sheet_name}!B1:B300"
+        range=f"{sheet_name}!B1:C300"
     ).execute()
     rows = result.get('values', [])
     mapping = {}
     for i, row in enumerate(rows):
-        val = row[0].strip() if row and row[0] else ''
-        if val:
-            mapping[val.lower()] = i
+        b_val = row[0].strip() if row and row[0] else ''
+        c_val = row[1].strip() if len(row) > 1 and row[1] else ''
+
+        # Prefer C (Key Stats new layout), fall back to B (IS/BS/CF)
+        val = c_val if c_val else b_val
+
+        if not val:
+            continue
+        if val in KEY_STATS_SUB_SECTIONS:
+            continue
+        mapping[val.lower()] = i
     return mapping
 
 
@@ -747,12 +827,12 @@ def find_data_columns(service, spreadsheet_id, sheet_name):
 def write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_id, col_count):
     """Write Key Stats formulas by resolving item names to row numbers."""
     item_to_row = scan_item_to_row(service, spreadsheet_id, sheet_name)
-    print(f"  Scanned {len(item_to_row)} items in column B")
+    print(f"  Scanned {len(item_to_row)} items in columns B-C")
 
     # Find Key Stats section and build a LOCAL item→row map for just this section
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"{sheet_name}!A1:B40"
+        range=f"{sheet_name}!A1:C50"
     ).execute()
     rows = result.get('values', [])
 
@@ -764,13 +844,17 @@ def write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_i
     for i, row in enumerate(rows):
         a = row[0].strip().lower() if row and row[0] else ''
         b = row[1].strip() if len(row) > 1 and row[1] else ''
+        c = row[2].strip() if len(row) > 2 and row[2] else ''
+
         if a == 'key stats':
             key_stats_row = i
         elif key_stats_row is not None and i > key_stats_row:
             if a in next_section_headers:
                 break
-            if b:
-                ks_items[b.lower()] = i
+            # Prefer C (new layout), fall back to B (old layout)
+            item_val = c if c else b
+            if item_val and item_val not in KEY_STATS_SUB_SECTIONS:
+                ks_items[item_val.lower()] = i
 
     if key_stats_row is None:
         print("  WARNING: Key Stats section not found")
