@@ -7,8 +7,8 @@ Tools for syncing financial data into Google Sheets from two sources.
 ### `new_company.sh` — Full flow for creating a new company tab
 
 Orchestrates the complete workflow to create a new company tab from scratch:
-1. Creates tab structure with `create_company_tab.py` (headers, items, Key Stats formulas)
-2. Fills financial data with `update_financials.py` (IS, BS, CF values)
+1. Creates tab structure with `create_company_tab.py` (headers, items, Key Stats formulas with YoY sub-groups)
+2. Fills financial data with `update_financials.py` (IS, BS, CF values + Capital Structure sync)
 3. Updates 扣非净利润 with `update_kcfjcxsyjlr.py` (A-share only)
 
 ```bash
@@ -24,7 +24,7 @@ Options:
 
 Reads Capital IQ Excel files (`.xls`/`.xlsx`) and writes Income Statement, Balance Sheet, and Cash Flow data into the corresponding Google Sheets. Matches rows by item name (column B), not row number, so sheet structure changes are handled safely.
 
-Also writes Payout Ratio formulas (`DPS / Basic EPS`) and copies Key Stats formulas to new columns automatically.
+Also writes Payout Ratio formulas (`DPS / Basic EPS`), copies Key Stats formulas to new columns automatically, and syncs Capital Structure Details from Excel to the Google Sheets 资本结构 tab.
 
 **Single file:**
 ```bash
@@ -74,12 +74,12 @@ python update_kcfjcxsyjlr.py --sheet-id <ID>     # target a different spreadshee
 
 ## Configuration
 
-Paths hardcoded in the scripts:
+Paths used by the scripts (via `os.path.expanduser('~')`):
 
 | Setting | Value |
 |---|---|
-| Google token | `/home/mike/.hermes/google_token.json` |
-| Eastmoney script | `/home/mike/projects/tinyant/eastmoney/index.js` |
+| Google token | `~/.hermes/google_token.json` |
+| Eastmoney script | `~/projects/tinyant/eastmoney/index.js` |
 | Default spreadsheet | `1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0` |
 
 Override the spreadsheet with `--sheet-id` (扣非) or `--spreadsheets` (batch financials).
@@ -87,10 +87,10 @@ Override the spreadsheet with `--sheet-id` (扣非) or `--spreadsheets` (batch f
 ### `create_company_tab.py` — Create new company tab from scratch
 
 Builds a new company tab in Google Sheets from CIQ Excel files — no template copy needed:
-1. Fills section headers (Key Stats, IS, BS, CF) and item names in column B
+1. Fills section headers (Key Stats with YoY sub-groups, IS, BS, CF) and item names in column B
 2. Creates year headers (2007 to current year), LTM, and quarterly columns
 3. Writes Key Stats formulas by resolving item names to row numbers
-4. Adds company to the Summary sheet
+4. Adds company to the Summary sheet (cloning formulas/format from a same-exchange column)
 
 ```bash
 python create_company_tab.py --code 600660 --name "福耀玻璃" --excel /path/to/CIQ_file.xls
@@ -113,4 +113,22 @@ python update_kcfjcxsyjlr.py --codes 600660 --sheet-id <ID>
 **Formula templates** in `create_company_tab.py` include ROIC (with tax rate adjustment and two-year average capital base), ROE, margins, coverage ratios, and FCFF. ROIC formula follows the pattern:
 ```
 ROIC = EBIT × (1 - Tax Rate) / (Net Debt + Common Equity + Minority Interest + Previous Year values) × 2
+```
+
+### `add_yoy_section.py` — Add YoY sub-groups to Key Stats
+
+Restructures existing company tabs to add 盈利指标 / 同比增速 sub-groups under Key Stats. For existing tabs, it inserts the sub-header row and shifts items accordingly.
+
+```bash
+python add_yoy_section.py --spreadsheet-id <ID> --sheet "公司财务"
+python add_yoy_section.py --spreadsheet-id <ID> --sheet "公司财务" --dry-run  # preview only
+```
+
+### `fix_summary_formulas.py` — Fix Summary INDIRECT row refs after YoY insertion
+
+When `add_yoy_section.py` inserts a sub-header row, Key Stats items shift down and Summary INDIRECT formulas referencing those rows become stale. This script increments the row refs (rows >= 3) in Summary to match.
+
+```bash
+python fix_summary_formulas.py --spreadsheet-id <ID>
+python fix_summary_formulas.py --spreadsheet-id <ID> --dry-run  # preview only
 ```
