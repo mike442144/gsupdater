@@ -91,7 +91,7 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
         for j, cell in enumerate(values):
             uev = cell.get('userEnteredValue', {})
             fv = uev.get('formulaValue', '')
-            if 'INDIRECT' in fv and '财务' in fv:
+            if 'INDIRECT' in fv:
                 new_fv = increment_formula_row(fv)
                 if new_fv != fv:
                     updates.append((i, j, fv, new_fv))

@@ -71,16 +71,13 @@ def find_key_stats_section(service, spreadsheet_id, sheet_name):
     """
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"'{sheet_name}'!A1:C60"
+        range=f"'{sheet_name}'!A1:C100"
     ).execute()
     rows = result.get('values', [])
 
     ks_start = None
     ks_end = len(rows)
     items = []
-    section_headers = ('income statement', 'balance sheet', 'cash flow',
-                       'key stats', 'supplemental', 'multiples', 'ratios',
-                       'segments', 'capitalization')
 
     for i, row in enumerate(rows):
         a = row[0].strip().lower() if row and row[0] else ''
@@ -90,7 +87,7 @@ def find_key_stats_section(service, spreadsheet_id, sheet_name):
         if a == 'key stats':
             ks_start = i
         elif ks_start is not None and i > ks_start:
-            if a in section_headers:
+            if a:
                 ks_end = i
                 break
             item_val = c if c else b
