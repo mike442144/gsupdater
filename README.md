@@ -110,10 +110,19 @@ python update_financials.py file.xls "福耀玻璃财务" --spreadsheet-id <ID>
 python update_kcfjcxsyjlr.py --codes 600660 --sheet-id <ID>
 ```
 
-**Formula templates** in `create_company_tab.py` include ROIC (with tax rate adjustment and two-year average capital base), ROE, margins, coverage ratios, and FCFF. ROIC formula follows the pattern:
-```
-ROIC = EBIT × (1 - Tax Rate) / (Net Debt + Common Equity + Minority Interest + Previous Year values) × 2
-```
+**Formula templates** in `create_company_tab.py` include three parallel ROIC rows, ROE, margins, coverage ratios, FCFF, and Basic EPS. The three ROIC methods are:
+
+| Row | Approach | Formula |
+|---|---|---|
+| `ROIC (资本来源法)` | Capital-source / financing side, two-period average | `EBIT × (1 − Tax) / (Net Debt + Common Equity + Minority Interest + prior-year values) × 2` |
+| `ROIC (资产法)` | Operating-asset side: total assets − excess cash − non-interest-bearing current liabilities, two-period average | `EBIT × (1 − Tax) / (avg invested capital from asset side)` |
+| `ROIC (Greenblatt)` | Greenblatt/McKinsey tangible capital, pre-tax, **beginning-of-period** base (no averaging) | `EBIT / (operating working capital + net fixed assets)`, denominator uses prior column |
+
+Formula templates support item markers to handle CIQ data quirks:
+- `{?Item}` — optional: a CIQ-omitted (zero) line resolves to a bare `0`
+- `{!Item}` — required but `N()`-wrapped, coercing CIQ's `'-'` text nil marker to `0` so arithmetic doesn't yield `#VALUE!`
+
+The Key Stats EPS row is `Basic EPS` (formerly `Diluted EPS Excl. Extra Items`).
 
 ### `add_yoy_section.py` — Add YoY sub-groups to Key Stats
 
@@ -131,4 +140,53 @@ When `add_yoy_section.py` inserts a sub-header row, Key Stats items shift down a
 ```bash
 python fix_summary_formulas.py --spreadsheet-id <ID>
 python fix_summary_formulas.py --spreadsheet-id <ID> --dry-run  # preview only
+```
+
+### `add_roic_methods.py` — Add the three ROIC methods to existing tabs
+
+Retrofits existing company tabs with the three ROIC rows. If a tab already has a base ROIC row, it relabels it to `ROIC (资本来源法)` and inserts the 资产法 & Greenblatt rows after it. If a tab has no base ROIC, it anchors on the Key Stats `Total Revenue` row and inserts all three rows. Idempotent — re-running rewrites in place rather than inserting duplicates.
+
+```bash
+python add_roic_methods.py                          # all industries
+python add_roic_methods.py --spreadsheet-id <ID>    # single spreadsheet
+python add_roic_methods.py --dry-run                # preview only
+```
+
+Tabs are skipped when they have neither a base ROIC nor a `Total Revenue` row, or lack the EBIT / current-asset lines the formulas need (e.g. bank/auto-financing tabs like `易鑫财务`).
+
+### `wrap_keystats_refs.py` — Wrap Key Stats refs to an item in `N()`
+
+Finds Key Stats formulas that reference a named item's row(s) and wraps those refs in `N()`, coercing CIQ's `'-'` text nil marker to `0`. Only touches the Key Stats section.
+
+```bash
+python wrap_keystats_refs.py --item "Minority Interest"                    # all industries
+python wrap_keystats_refs.py --item "Effective Tax Rate %" --spreadsheet-id <ID>
+python wrap_keystats_refs.py --item "Minority Interest" --dry-run
+```
+
+### `audit_roic_rollout.py` — Safety audit before a Key Stats rollout
+
+Reports, per spreadsheet, the max `Summary` INDIRECT row reference vs the ROIC row(s) in each tab. Inserting rows after ROIC is only safe when `maxSummaryRef <= roic_row`, since Summary references company-tab rows by fixed number (text refs are NOT auto-adjusted on row insert). Also lists tabs missing a base ROIC.
+
+```bash
+python audit_roic_rollout.py
+```
+
+### `rename_eps.py` — Rename EPS row to Basic EPS on existing tabs
+
+Renames the Key Stats item `Diluted EPS Excl. Extra Items` → `Basic EPS` and updates all formulas (Key Stats + Summary INDIRECT) to reference the Basic EPS row in the Income Statement.
+
+```bash
+python rename_eps.py                          # all industries
+python rename_eps.py --spreadsheet-id <ID>    # single spreadsheet
+python rename_eps.py --dry-run                # preview only
+```
+
+### `run_rollout.py` — Driver for the ROIC rollout
+
+Runs `add_roic_methods.py`, then `wrap_keystats_refs.py` for `Minority Interest` and `Effective Tax Rate %`, over the audit-cleared "safe" industry list. Industries with divergent Summary layouts / no usable ROIC anchor (地产开发, 金融, 租赁物业, 教育) are excluded.
+
+```bash
+python run_rollout.py            # all safe industries
+python run_rollout.py 互联网 食品  # specific industries
 ```
