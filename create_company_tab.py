@@ -50,13 +50,15 @@ KEY_STATS_ITEMS = [
     "Cash from Ops.",
     "Minority Interest",
     "FCFF",
-    "Diluted EPS Excl. Extra Items",
+    "Basic EPS",
     "Net Debt",
     "EBITDA",
     "扣非净利润",
     "SBC",
     "Total Revenue",
-    "ROIC",
+    "ROIC (资本来源法)",
+    "ROIC (资产法)",
+    "ROIC (Greenblatt)",
 ]
 
 # Additional Key Stats items that may appear (from GS observation)
@@ -144,15 +146,15 @@ FORMULA_TEMPLATES = {
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
     "Minority Interest": {
-        "formula": "=__C__{Minority Interest}",
+        "formula": "=__C__{!Minority Interest}",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
     "FCFF": {
         "formula": "=__C__{Cash from Ops.}+__C__{Capital Expenditure}",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
-    "Diluted EPS Excl. Extra Items": {
-        "formula": "=__C__{Diluted EPS Excl. Extra Items}",
+    "Basic EPS": {
+        "formula": "=__C__{Basic EPS}",
         "format": {"type": "NUMBER", "pattern": "#,##0.00"},
     },
     "Net Debt": {
@@ -167,8 +169,21 @@ FORMULA_TEMPLATES = {
         "formula": "=__C__{Total Revenue}",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
-    "ROIC": {
-        "formula": "=__C__{EBIT}*(1-__C__{Effective Tax Rate %})/(__C__{Net Debt}+__C__{Common Equity}+__C__{Minority Interest}+__PC__{Net Debt}+__PC__{Common Equity}+__PC__{Minority Interest})*2",
+    "ROIC (资本来源法)": {
+        "formula": "=__C__{EBIT}*(1-__C__{!Effective Tax Rate %})/(__C__{Net Debt}+__C__{Common Equity}+__C__{!Minority Interest}+__PC__{Net Debt}+__PC__{Common Equity}+__PC__{!Minority Interest})*2",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    # Operating-asset (investing) approach: invested capital from the asset side,
+    # = Total Assets - excess cash - non-interest-bearing current liabilities. Two-period avg.
+    "ROIC (资产法)": {
+        "formula": "=__C__{EBIT}*(1-__C__{!Effective Tax Rate %})/((__C__{Total Assets}-__C__{?Total Cash & ST Investments}-(__C__{Total Current Liabilities}-__C__{?Short-term Borrowings}-__C__{?Curr. Port. of Leases}))+(__PC__{Total Assets}-__PC__{?Total Cash & ST Investments}-(__PC__{Total Current Liabilities}-__PC__{?Short-term Borrowings}-__PC__{?Curr. Port. of Leases})))*2",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    # Greenblatt/McKinsey tangible-capital approach: pre-tax EBIT over operating
+    # working capital + net fixed assets (excludes goodwill/intangibles & excess cash).
+    # Textbook form: beginning-of-period capital base (prior column, __PC__), no averaging.
+    "ROIC (Greenblatt)": {
+        "formula": "=__C__{EBIT}/((__PC__{Total Current Assets}-__PC__{?Total Cash & ST Investments})-(__PC__{Total Current Liabilities}-__PC__{?Short-term Borrowings}-__PC__{?Curr. Port. of Leases})+__PC__{Net Property, Plant & Equipment})",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Revenue YoY": {
@@ -783,19 +798,31 @@ def scan_item_to_row(service, spreadsheet_id, sheet_name):
 
 
 def resolve_formula(template_str, col_letter, prev_col_letter, item_to_row):
-    """Resolve formula template to actual GS formula."""
-    formula = template_str.replace('__C__', col_letter).replace('__PC__', prev_col_letter)
+    """Resolve formula template to actual GS formula.
 
+    {?Item} is optional: a missing (CIQ-omitted, zero) line resolves to a bare 0,
+    dropping its column prefix; a missing required item -> <col>1 + warning.
+    """
     def replace_item(match):
-        item_name = match.group(1)
+        col = col_letter if match.group(1) == '__C__' else prev_col_letter
+        item_name = match.group(2)
+        # Marker prefixes: '?' optional (0 if the row is absent), '!' required but
+        # N()-wrapped. Both N()-wrap when the row exists, coercing CIQ's '-' nil
+        # marker (a text string) to 0 so arithmetic doesn't yield #VALUE!.
+        marker = ''
+        if item_name[:1] in ('?', '!'):
+            marker, item_name = item_name[0], item_name[1:]
         row = item_to_row.get(item_name.lower())
         if row is None:
+            if marker == '?':
+                return '0'
             print(f"    WARNING: Item '{item_name}' not found, using row 1")
-            return '1'
-        return str(row + 1)
+            return col + '1'
+        if marker:
+            return f'N({col}{row + 1})'
+        return f'{col}{row + 1}'
 
-    formula = re.sub(r'\{([^}]+)\}', replace_item, formula)
-    return formula
+    return re.sub(r'(__C__|__PC__)\{([?!]?[^}]+)\}', replace_item, template_str)
 
 
 def find_data_columns(service, spreadsheet_id, sheet_name):
