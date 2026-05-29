@@ -30,12 +30,14 @@ SUB_SECTION_METRICS = "盈利指标"
 SUB_SECTION_YOY = "同比增速"
 SUB_SECTIONS = (SUB_SECTION_METRICS, SUB_SECTION_YOY)
 
+# IFERROR(...,) blanks the cell when the prior-period base is 0/empty (e.g.
+# 扣非净利润 is an A-share-only line, empty for HK/US names → would be #DIV/0!).
 YOY_ITEMS = [
-    ("Revenue YoY", "=__C__{Total Revenue}/__PC__{Total Revenue}-1"),
-    ("Gross Profit YoY", "=__C__{Gross Profit}/__PC__{Gross Profit}-1"),
-    ("Operating Income YoY", "=__C__{Operating Income}/__PC__{Operating Income}-1"),
-    ("Net Income YoY", "=__C__{Net Income to Company}/__PC__{Net Income to Company}-1"),
-    ("扣非净利润 YoY", "=__C__{扣非净利润}/__PC__{扣非净利润}-1"),
+    ("Revenue YoY", "=IFERROR(__C__{Total Revenue}/__PC__{Total Revenue}-1,)"),
+    ("Gross Profit YoY", "=IFERROR(__C__{Gross Profit}/__PC__{Gross Profit}-1,)"),
+    ("Operating Income YoY", "=IFERROR(__C__{Operating Income}/__PC__{Operating Income}-1,)"),
+    ("Net Income YoY", "=IFERROR(__C__{Net Income to Company}/__PC__{Net Income to Company}-1,)"),
+    ("扣非净利润 YoY", "=IFERROR(__C__{扣非净利润}/__PC__{扣非净利润}-1,)"),
 ]
 
 
@@ -151,6 +153,57 @@ def resolve_formula(template_str, col_letter, prev_col_letter, item_to_row):
 
     formula = re.sub(r'\{([^}]+)\}', replace_item, formula)
     return formula
+
+
+def rewrite_yoy_formulas(service, spreadsheet_id, sheet_name, dry_run=False):
+    """Rewrite the YoY-row formulas in place (no insert) for a tab that already
+    has the section. Used to refresh formulas (e.g. after the IFERROR change)."""
+    print(f"\n{'='*60}\nRewriting YoY formulas: {sheet_name}\n{'='*60}")
+    props = get_sheet_properties(service, spreadsheet_id, sheet_name)
+    if not props:
+        print(f"  ERROR: Sheet '{sheet_name}' not found")
+        return False
+    sheet_id = props['sheetId']
+    item_to_row = scan_item_to_row(service, spreadsheet_id, sheet_name)
+    data_cols = find_data_columns(service, spreadsheet_id, sheet_name)
+    if not data_cols:
+        print("  WARNING: No data columns found")
+        return False
+
+    requests = []
+    last = None
+    for item_name, template in YOY_ITEMS:
+        row0 = item_to_row.get(item_name.lower())
+        if row0 is None:
+            print(f"  SKIP — '{item_name}' row not found (section may be absent)")
+            continue
+        for ci, dc in enumerate(data_cols):
+            cl = col_to_letter(dc)
+            pc = col_to_letter(data_cols[ci - 1]) if ci > 0 else col_to_letter(max(0, dc - 1))
+            formula = resolve_formula(template, cl, pc, item_to_row)
+            last = (item_name, row0 + 1, cl, formula)
+            requests.append({
+                'updateCells': {
+                    'range': {'sheetId': sheet_id,
+                              'startRowIndex': row0, 'endRowIndex': row0 + 1,
+                              'startColumnIndex': dc, 'endColumnIndex': dc + 1},
+                    'rows': [{'values': [{
+                        'userEnteredValue': {'formulaValue': formula},
+                        'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.0%'}},
+                    }]}],
+                    'fields': 'userEnteredValue,userEnteredFormat',
+                }
+            })
+    if last:
+        print(f"  e.g. {last[0]} (row {last[1]}) last col {last[2]}{last[1]}={last[3]}")
+    if dry_run:
+        print(f"  [DRY RUN] would rewrite {len(requests)} YoY formula cells")
+        return True
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={'requests': requests}).execute()
+        print(f"  ✓ Rewrote {len(requests)} YoY formula cells")
+    return True
 
 
 def add_yoy_section(service, spreadsheet_id, sheet_name, dry_run=False):
@@ -426,10 +479,15 @@ def main():
     parser.add_argument('--sheet', required=True, help='Sheet name (e.g. "今世缘财务")')
     parser.add_argument('--spreadsheet-id', required=True, help='Google Spreadsheet ID')
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
+    parser.add_argument('--rewrite-formulas', action='store_true',
+                        help='Only rewrite YoY formulas in place (tab must already have the section)')
     args = parser.parse_args()
 
     service = get_service()
-    success = add_yoy_section(service, args.spreadsheet_id, args.sheet, dry_run=args.dry_run)
+    if args.rewrite_formulas:
+        success = rewrite_yoy_formulas(service, args.spreadsheet_id, args.sheet, dry_run=args.dry_run)
+    else:
+        success = add_yoy_section(service, args.spreadsheet_id, args.sheet, dry_run=args.dry_run)
     sys.exit(0 if success else 1)
 
 

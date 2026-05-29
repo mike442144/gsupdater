@@ -192,24 +192,26 @@ FORMULA_TEMPLATES = {
         "formula": "=IFERROR(__C__{!Dividends per Share}/__C__{Basic EPS},)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
+    # IFERROR(...,) blanks the cell when the prior-period base is 0/empty
+    # (e.g. 扣非净利润 is A-share-only, empty for HK/US names → would be #DIV/0!).
     "Revenue YoY": {
-        "formula": "=__C__{Total Revenue}/__PC__{Total Revenue}-1",
+        "formula": "=IFERROR(__C__{Total Revenue}/__PC__{Total Revenue}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Gross Profit YoY": {
-        "formula": "=__C__{Gross Profit}/__PC__{Gross Profit}-1",
+        "formula": "=IFERROR(__C__{Gross Profit}/__PC__{Gross Profit}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Operating Income YoY": {
-        "formula": "=__C__{Operating Income}/__PC__{Operating Income}-1",
+        "formula": "=IFERROR(__C__{Operating Income}/__PC__{Operating Income}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Net Income YoY": {
-        "formula": "=__C__{Net Income to Company}/__PC__{Net Income to Company}-1",
+        "formula": "=IFERROR(__C__{Net Income to Company}/__PC__{Net Income to Company}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "扣非净利润 YoY": {
-        "formula": "=__C__{扣非净利润}/__PC__{扣非净利润}-1",
+        "formula": "=IFERROR(__C__{扣非净利润}/__PC__{扣非净利润}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
 }
