@@ -7,3 +7,7 @@ build/
 .claude/
 .qoder/
 *.local.json
+
+# Ranking output
+rankings.csv
+*.csv

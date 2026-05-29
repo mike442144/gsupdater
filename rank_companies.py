@@ -295,6 +295,15 @@ def process_spreadsheet(service, spreadsheet_id, industry, results, summary_cach
                 if ebit_val and ebit_val != 0:
                     ev_ebit = ev / ebit_val
 
+            # Corrected ROIC: when ROIC is negative but EBIT is positive, flip
+            # only the sign (magnitude unchanged). A negative ROIC with positive
+            # operating profit is a denominator-sign artifact (negative invested
+            # capital), not a real loss — used for ranking, original kept as-is.
+            roic_corrected = roic_val
+            if (roic_val is not None and roic_val < 0
+                    and ebit_val is not None and ebit_val > 0):
+                roic_corrected = -roic_val
+
             results.append({
                 'industry': industry,
                 'code': next((c for c, n in zip(codes, names)
@@ -307,6 +316,7 @@ def process_spreadsheet(service, spreadsheet_id, industry, results, summary_cach
                 'ebit': ebit_val,
                 'ev_ebit': ev_ebit,
                 'roic': roic_val,
+                'roic_corrected': roic_corrected,
             })
 
             # Status
@@ -356,15 +366,23 @@ def main():
         time.sleep(5)  # pause between spreadsheets
 
     # ── Rankings ──────────────────────────────────────────────────────
-    # EV/EBIT: ascending (cheaper = better), only positive values
+    # EV/EBIT: ascending (cheaper = better). Keep positive values, plus the
+    # negative ones whose EBIT is positive — there a negative EV/EBIT means a
+    # negative EV (net cash exceeds market cap + debt), i.e. the cheapest case,
+    # so plain ascending sort correctly lands them ahead of all positives.
+    # A negative EV/EBIT from a negative EBIT (a loss) stays excluded.
     ev_ranked = [r for r in results
-                 if r['ev_ebit'] is not None and r['ev_ebit'] > 0]
+                 if r['ev_ebit'] is not None
+                 and (r['ev_ebit'] > 0
+                      or (r['ebit'] is not None and r['ebit'] > 0))]
     ev_ranked.sort(key=lambda x: x['ev_ebit'])
 
-    # ROIC: descending (higher return = better), only positive values
+    # ROIC: descending (higher return = better), only positive values.
+    # Ranking uses the corrected ROIC; original 'roic' is kept but not ranked.
     roic_ranked = [r for r in results
-                   if r['roic'] is not None and r['roic'] > 0]
-    roic_ranked.sort(key=lambda x: -x['roic'])
+                   if r['roic_corrected'] is not None
+                   and r['roic_corrected'] > 0]
+    roic_ranked.sort(key=lambda x: -x['roic_corrected'])
 
     # Assign rank numbers — key by (company, industry) to handle duplicates
     ev_rank = {}
@@ -393,7 +411,8 @@ def main():
     # ── Write CSV ──────────────────────────────────────────────────────
     fieldnames = ['industry', 'code', 'company', 'period',
                   'tev_ebitda', 'ev', 'ebitda', 'ebit',
-                  'ev_ebit', 'ev_rank', 'roic', 'roic_rank', 'combined']
+                  'ev_ebit', 'ev_rank', 'roic', 'roic_corrected',
+                  'roic_rank', 'combined']
 
     def _round_row(r):
         """Round numeric fields for cleaner CSV output."""
@@ -404,8 +423,9 @@ def main():
         for key in ('ev', 'ebitda', 'ebit'):
             if out.get(key) is not None:
                 out[key] = round(out[key])
-        if out.get('roic') is not None:
-            out['roic'] = round(out['roic'], 4)
+        for key in ('roic', 'roic_corrected'):
+            if out.get(key) is not None:
+                out[key] = round(out[key], 4)
         return out
 
     output_path = os.path.join(os.path.dirname(__file__), args.output)
@@ -416,41 +436,56 @@ def main():
         for r in combined:
             writer.writerow(_round_row(r))
 
+    def roic_str(r):
+        """Corrected ROIC for display; '*' marks a sign-flipped value."""
+        rc = r['roic_corrected']
+        if rc is None:
+            return '-'
+        flipped = r['roic'] is not None and rc != r['roic']
+        return f"{rc:.1%}" + ('*' if flipped else '')
+
+    def ev_str(r):
+        """EV/EBIT for display; shows kept negatives (negative-EV) too."""
+        v = r['ev_ebit']
+        if v is None:
+            return '-'
+        if v > 0 or (r['ebit'] is not None and r['ebit'] > 0):
+            return f"{v:.1f}"
+        return '-'
+
     # ── Print: EV/EBIT ranking ────────────────────────────────────────
     print(f"\n{'=' * 90}")
     print(f" EV/EBIT Ranking (low → high, cheaper = better)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
-          f"{'EV/EBIT':>8} {'ROIC':>8}  Code")
+          f"{'EV/EBIT':>8} {'ROIC':>9}  Code")
     print(f"{'-' * 60}")
     for r in ev_ranked:
-        roic_str = f"{r['roic']:.1%}" if r['roic'] and r['roic'] > 0 else '-'
         print(f"{r['ev_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
-              f"{r['ev_ebit']:>8.1f} {roic_str:>8}  {r['code']}")
+              f"{r['ev_ebit']:>8.1f} {roic_str(r):>9}  {r['code']}")
 
     # ── Print: ROIC ranking ───────────────────────────────────────────
     print(f"\n{'=' * 90}")
-    print(f" ROIC Ranking (high → low, better return)")
+    print(f" ROIC Ranking (high → low, better return; * = sign-corrected)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
-          f"{'ROIC':>8} {'EV/EBIT':>8}  Code")
+          f"{'ROIC':>9} {'EV/EBIT':>8}  Code")
     print(f"{'-' * 60}")
     for r in roic_ranked:
-        ev_str = f"{r['ev_ebit']:.1f}" if r['ev_ebit'] and r['ev_ebit'] > 0 else '-'
         print(f"{r['roic_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
-              f"{r['roic']:>7.1%} {ev_str:>8}  {r['code']}")
+              f"{roic_str(r):>9} {ev_str(r):>8}  {r['code']}")
 
     # ── Print: Combined ranking ───────────────────────────────────────
     print(f"\n{'=' * 90}")
     print(f" Combined Ranking (EV/EBIT rank + ROIC rank, lower = better)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
-          f"{'Combined':>8} {'EV/EBIT':>8} {'R_EV':>5} {'ROIC':>8} {'R_ROIC':>6}  Code")
+          f"{'Combined':>8} {'EV/EBIT':>8} {'R_EV':>5} {'ROIC':>9} {'R_ROIC':>6}  Code")
     print(f"{'-' * 80}")
     for i, r in enumerate(combined, 1):
         print(f"{i:>3}  {r['company']:<16} {r['industry']:<8} "
               f"{r['combined']:>8} {r['ev_ebit']:>8.1f} {r['ev_rank']:>5} "
-              f"{r['roic']:>7.1%} {r['roic_rank']:>6}  {r['code']}")
+              f"{roic_str(r):>9} {r['roic_rank']:>6}  {r['code']}")
 
     print(f"\nTotal: {len(results)} companies | "
           f"EV/EBIT ranked: {len(ev_ranked)} | "
