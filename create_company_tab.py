@@ -59,6 +59,7 @@ KEY_STATS_ITEMS = [
     "ROIC (资本来源法)",
     "ROIC (资产法)",
     "ROIC (Greenblatt)",
+    "Payout Ratio %",
 ]
 
 # Additional Key Stats items that may appear (from GS observation)
@@ -184,6 +185,11 @@ FORMULA_TEMPLATES = {
     # Textbook form: beginning-of-period capital base (prior column, __PC__), no averaging.
     "ROIC (Greenblatt)": {
         "formula": "=__C__{EBIT}/((__PC__{Total Current Assets}-__PC__{?Total Cash & ST Investments})-(__PC__{Total Current Liabilities}-__PC__{?Short-term Borrowings}-__PC__{?Curr. Port. of Leases})+__PC__{Net Property, Plant & Equipment})",
+        "format": {"type": "PERCENT", "pattern": "0.0%"},
+    },
+    # DPS N()-wrapped (no-dividend '-' -> 0); IFERROR blanks a zero/negative EPS.
+    "Payout Ratio %": {
+        "formula": "=IFERROR(__C__{!Dividends per Share}/__C__{Basic EPS},)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Revenue YoY": {
@@ -946,58 +952,6 @@ def write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_i
         print("  No Key Stats formulas to write")
 
 
-def write_payout_ratio_formula(service, spreadsheet_id, sheet_name, target_sheet_id, col_count):
-    """Write Payout Ratio % formula (if the row already exists in Key Stats)."""
-    item_to_row = scan_item_to_row(service, spreadsheet_id, sheet_name)
-
-    payout_row = item_to_row.get('payout ratio %')
-    if payout_row is None:
-        print("  Skipping Payout Ratio: not in Key Stats")
-        return
-
-    dps_key = 'dividends per share'
-    eps_key = 'basic eps'
-
-    if dps_key not in item_to_row or eps_key not in item_to_row:
-        print("  Skipping Payout Ratio: missing DPS or EPS items")
-        return
-
-    dps_row = item_to_row[dps_key]
-    eps_row = item_to_row[eps_key]
-
-    data_cols = find_data_columns(service, spreadsheet_id, sheet_name)
-    if not data_cols:
-        return
-
-    requests = []
-    for data_col in data_cols:
-        col_letter = col_to_letter(data_col)
-        formula = f'={col_letter}{dps_row + 1}/{col_letter}{eps_row + 1}'
-        requests.append({
-            'updateCells': {
-                'range': {
-                    'sheetId': target_sheet_id,
-                    'startRowIndex': payout_row,
-                    'endRowIndex': payout_row + 1,
-                    'startColumnIndex': data_col,
-                    'endColumnIndex': data_col + 1,
-                },
-                'rows': [{'values': [{
-                    'userEnteredValue': {'formulaValue': formula},
-                    'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.0%'}}
-                }]}],
-                'fields': 'userEnteredValue,userEnteredFormat',
-            }
-        })
-
-    if requests:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={'requests': requests}
-        ).execute()
-        print(f"  ✓ Wrote {len(requests)} Payout Ratio formulas")
-
-
 def classify_exchange(code):
     """Classify a stock code by exchange.
 
@@ -1175,13 +1129,10 @@ def main():
     # Step 1: Build structure (sections, items, headers)
     target_sheet_id, col_count = build_sheet_structure(service, spreadsheet_id, sheet_name, args.excel)
 
-    # Step 2: Write Key Stats formulas
+    # Step 2: Write Key Stats formulas (incl. Payout Ratio % from FORMULA_TEMPLATES)
     write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_id, col_count)
 
-    # Step 3: Payout Ratio
-    write_payout_ratio_formula(service, spreadsheet_id, sheet_name, target_sheet_id, col_count)
-
-    # Step 4: Add to Summary
+    # Step 3: Add to Summary
     add_to_summary(service, spreadsheet_id, args.code, args.name)
 
     print(f"\nDone! Tab '{sheet_name}' created.")

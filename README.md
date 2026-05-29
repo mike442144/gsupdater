@@ -110,13 +110,20 @@ python update_financials.py file.xls "福耀玻璃财务" --spreadsheet-id <ID>
 python update_kcfjcxsyjlr.py --codes 600660 --sheet-id <ID>
 ```
 
-**Formula templates** in `create_company_tab.py` include three parallel ROIC rows, ROE, margins, coverage ratios, FCFF, and Basic EPS. The three ROIC methods are:
+**Formula templates** in `create_company_tab.py` include three parallel ROIC rows, a Payout Ratio % row, ROE, margins, coverage ratios, FCFF, and Basic EPS. The three ROIC methods are:
 
 | Row | Approach | Formula |
 |---|---|---|
 | `ROIC (资本来源法)` | Capital-source / financing side, two-period average | `EBIT × (1 − Tax) / (Net Debt + Common Equity + Minority Interest + prior-year values) × 2` |
 | `ROIC (资产法)` | Operating-asset side: total assets − excess cash − non-interest-bearing current liabilities, two-period average | `EBIT × (1 − Tax) / (avg invested capital from asset side)` |
 | `ROIC (Greenblatt)` | Greenblatt/McKinsey tangible capital, pre-tax, **beginning-of-period** base (no averaging) | `EBIT / (operating working capital + net fixed assets)`, denominator uses prior column |
+
+The `Payout Ratio %` row sits just below the ROIC block:
+
+```
+Payout Ratio % = IFERROR( N(Dividends per Share) / Basic EPS , )
+```
+`N()` coerces a no-dividend `'-'` to `0` (→ 0%); `IFERROR` blanks the cell when Basic EPS is zero/negative.
 
 Formula templates support item markers to handle CIQ data quirks:
 - `{?Item}` — optional: a CIQ-omitted (zero) line resolves to a bare `0`
@@ -153,6 +160,16 @@ python add_roic_methods.py --dry-run                # preview only
 ```
 
 Tabs are skipped when they have neither a base ROIC nor a `Total Revenue` row, or lack the EBIT / current-asset lines the formulas need (e.g. bank/auto-financing tabs like `易鑫财务`).
+
+### `add_payout_ratio.py` — Add the Payout Ratio % row to existing tabs
+
+Retrofits existing company tabs with a `Payout Ratio %` row (`IFERROR(N(Dividends per Share)/Basic EPS,)`), inserted right below the last ROIC row — the same audited-safe zone as the ROIC rollout, so no Summary fix is needed. Idempotent: a tab that already has the row gets its formula rewritten in place. The label lands in column B or C automatically, matching the anchor row's layout. Tabs without a ROIC / Total Revenue anchor are skipped.
+
+```bash
+python add_payout_ratio.py                          # all industries
+python add_payout_ratio.py --spreadsheet-id <ID>    # single spreadsheet
+python add_payout_ratio.py --dry-run                # preview only
+```
 
 ### `wrap_keystats_refs.py` — Wrap Key Stats refs to an item in `N()`
 
