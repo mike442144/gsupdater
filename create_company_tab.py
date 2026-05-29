@@ -414,7 +414,8 @@ def find_template_sheet(service, spreadsheet_id):
 
 # ── Build structure ──
 
-def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path):
+def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path,
+                          template_name=None):
     """
     Build the sheet from scratch:
     1. Create sheet with adequate grid
@@ -442,8 +443,10 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
 
     print(f"  Excel: IS={len(is_items)}, BS={len(bs_items or [])}, CF={len(cf_items or [])} items")
 
-    # Find Key Stats template
-    template = find_template_sheet(service, spreadsheet_id)
+    # Find Key Stats template (explicit override wins; falls back to auto-detect,
+    # which only matches 财务-suffixed tabs — bare-name industries like 餐饮 need
+    # an explicit --template to copy the right item layout).
+    template = template_name or find_template_sheet(service, spreadsheet_id)
     ks_items = []
     if template:
         ks_items = get_key_stats_from_gs(service, spreadsheet_id, template)
@@ -553,7 +556,10 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                     'fields': 'userEnteredValue',
                 }
             })
-        # Items in specified column (B=1 or C=2)
+        # Items in specified column (B=1 or C=2). Named sections reserve row_idx
+        # for the header (items start at row_idx+1); unnamed sections (sub-headers
+        # / item lists) have no header row, so items start at row_idx itself.
+        item_start = row_idx + (1 if section_name else 0)
         if items:
             item_requests = []
             for i, item in enumerate(items):
@@ -580,8 +586,8 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
                     'updateCells': {
                         'range': {
                             'sheetId': target_sheet_id,
-                            'startRowIndex': row_idx + 1 + i,
-                            'endRowIndex': row_idx + 2 + i,
+                            'startRowIndex': item_start + i,
+                            'endRowIndex': item_start + i + 1,
                             'startColumnIndex': item_col,
                             'endColumnIndex': item_col + 1,
                         },
@@ -1093,6 +1099,8 @@ def main():
     parser.add_argument('--spreadsheet-id', help='Google Spreadsheet ID (auto-routed if omitted)')
     parser.add_argument('--excel', required=True, help='Path to CIQ Excel file')
     parser.add_argument('--sheet-suffix', default='财务', help='Sheet name suffix (default: 财务)')
+    parser.add_argument('--template', help='Existing tab to copy Key Stats item layout from '
+                        '(default: auto-detect a 财务-suffixed tab)')
     parser.add_argument('--dry-run', action='store_true', help='Preview actions without writing')
     args = parser.parse_args()
 
@@ -1129,7 +1137,7 @@ def main():
         return 0, 200
 
     # Step 1: Build structure (sections, items, headers)
-    target_sheet_id, col_count = build_sheet_structure(service, spreadsheet_id, sheet_name, args.excel)
+    target_sheet_id, col_count = build_sheet_structure(service, spreadsheet_id, sheet_name, args.excel, args.template)
 
     # Step 2: Write Key Stats formulas (incl. Payout Ratio % from FORMULA_TEMPLATES)
     write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_id, col_count)
