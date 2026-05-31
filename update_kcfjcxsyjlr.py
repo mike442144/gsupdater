@@ -168,16 +168,19 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
     # Build range covering full grid width
     end_col = col_to_letter(grid_width - 1)
     
-    # Dynamically find 扣非净利润 row by scanning column B
-    b_col_result = service.spreadsheets().values().get(
+    # Dynamically find 扣非净利润 row by scanning columns B and C
+    # (new layout places Key Stats items in column C with sub-section headers in B)
+    bc_col_result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=f"'{sheet_name}'!B1:B100"
+        range=f"'{sheet_name}'!B1:C100"
     ).execute()
-    b_rows = b_col_result.get('values', [])
-    
+    bc_rows = bc_col_result.get('values', [])
+
     kcfj_row = None
-    for i, row in enumerate(b_rows):
-        if row and '扣非净利润' in str(row[0]).strip():
+    for i, row in enumerate(bc_rows):
+        b_val = str(row[0]).strip() if row and row[0] else ''
+        c_val = str(row[1]).strip() if len(row) > 1 and row[1] else ''
+        if '扣非净利润' in b_val or '扣非净利润' in c_val:
             kcfj_row = i + 1  # 1-indexed
             break
     

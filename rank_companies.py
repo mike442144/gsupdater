@@ -31,7 +31,7 @@ from googleapiclient.discovery import build
 GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 
 SAFE = ['互联网', '传媒', '贸易', '纺织服装', '食品', '餐饮', '个人用品',
-        '药', '建材', '家电', '汽车', '设备', '交通运输', 'SAAS']
+        '药', '建材', '家电', '汽车', '设备', '交通运输', 'SAAS', '饮料']
 
 SECTION_HEADERS = {'income statement', 'balance sheet', 'cash flow',
                    'key stats', 'supplemental', 'business segments'}
