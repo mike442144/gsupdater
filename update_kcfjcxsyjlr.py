@@ -25,7 +25,6 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # Configuration
-GOOGLE_SHEET_ID = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
 GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 EASTMONEY_SCRIPT = os.path.join(os.path.expanduser('~/Projects/tinyant/eastmoney'), 'index.js')
 EASTMONEY_DIR = os.path.expanduser('~/Projects/tinyant/eastmoney')
@@ -457,7 +456,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description='Update 扣非净利润 from eastmoney')
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
-    parser.add_argument('--sheet-id', default=GOOGLE_SHEET_ID, help='Google Sheets spreadsheet ID')
+    parser.add_argument('--sheet-id', required=True, help='Google Sheets spreadsheet ID')
     parser.add_argument('--codes', help='Comma-separated stock codes (default: all A-shares from Summary)')
     args = parser.parse_args()
     

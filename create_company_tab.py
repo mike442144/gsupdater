@@ -32,7 +32,7 @@ GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 
 # ── Key Stats item names ──
 KEY_STATS_ITEMS = [
-    "Net Working Capital",
+    "Net-nets",
     "Net Income",
     "Gross Margin",
     "Op. Margin",
@@ -82,12 +82,12 @@ YOY_ITEMS = [
 
 # Formula templates
 FORMULA_TEMPLATES = {
-    "Net Working Capital": {
-        "formula": "=__C__{Total Current Assets}-__C__{Total Current Liabilities}",
+    "Net-nets": {
+        "formula": "=__C__{Total Current Assets}-__C__{Total Liabilities}",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
     "Net Income": {
-        "formula": "=__C__{Net Income to Company}",
+        "formula": "=__C__{Net Income}",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
     "Gross Margin": {
@@ -99,11 +99,11 @@ FORMULA_TEMPLATES = {
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Net Margin": {
-        "formula": "=__C__{Net Income to Company}/__C__{Total Revenue}",
+        "formula": "=__C__{Net Income}/__C__{Total Revenue}",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "ROE": {
-        "formula": "=__C__{Net Income to Company}/(__C__{Total Common Equity}+__PC__{Total Common Equity})*2",
+        "formula": "=__C__{Net Income}/(__C__{Total Common Equity}+__PC__{Total Common Equity})*2",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Interest Coverage Ratio": {
@@ -111,7 +111,7 @@ FORMULA_TEMPLATES = {
         "format": {"type": "NUMBER", "pattern": "#,##0.0"},
     },
     "Interest and Rental Exp Coverage Ratio": {
-        "formula": "=__C__{Net Income to Company}/(__C__{Interest Expense}-__C__{Net Rental Exp.})*-1+1",
+        "formula": "=__C__{Net Income}/(__C__{Interest Expense}-__C__{Net Rental Exp.})*-1+1",
         "format": {"type": "NUMBER", "pattern": "#,##0.0"},
     },
     "D&A from Company": {
@@ -207,7 +207,7 @@ FORMULA_TEMPLATES = {
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "Net Income YoY": {
-        "formula": "=IFERROR(__C__{Net Income to Company}/__PC__{Net Income to Company}-1,)",
+        "formula": "=IFERROR(__C__{Net Income}/__PC__{Net Income}-1,)",
         "format": {"type": "PERCENT", "pattern": "0.0%"},
     },
     "扣非净利润 YoY": {
@@ -1113,8 +1113,9 @@ def main():
         if spreadsheet_id:
             print(f"Auto-routed to industry: {industry}")
         else:
-            print(f"WARNING: Code {args.code} not found in industry_spreadsheets.json")
-            spreadsheet_id = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
+            print(f"ERROR: Code {args.code} not found in industry_spreadsheets.json")
+            print("Pass --spreadsheet-id to specify the target spreadsheet")
+            sys.exit(1)
 
     sheet_name = f"{args.name}{args.sheet_suffix}"
     print(f"Creating tab: '{sheet_name}' in spreadsheet {spreadsheet_id[:20]}...")

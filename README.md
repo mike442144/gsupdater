@@ -80,9 +80,9 @@ Paths used by the scripts (via `os.path.expanduser('~')`):
 |---|---|
 | Google token | `~/.hermes/google_token.json` |
 | Eastmoney script | `~/projects/tinyant/eastmoney/index.js` |
-| Default spreadsheet | `1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0` |
 
-Override the spreadsheet with `--sheet-id` (扣非) or `--spreadsheets` (batch financials).
+Spreadsheet ID is auto-resolved from `industry_spreadsheets.json` by stock code.
+Override with `--spreadsheet-id` (financials), `--sheet-id` (扣非), or `--spreadsheets` (batch financials).
 
 ### `create_company_tab.py` — Create new company tab from scratch
 

@@ -21,7 +21,6 @@ from googleapiclient.discovery import build
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-GOOGLE_SHEET_ID = "1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0"
 GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 
 SECTION_MAP = {
@@ -360,7 +359,7 @@ def is_eps_item(norm_name):
 
 def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=False):
     if spreadsheet_id is None:
-        spreadsheet_id = GOOGLE_SHEET_ID
+        raise ValueError("spreadsheet_id is required. Pass --spreadsheet-id or use --batch mode.")
 
     print(f"\n{'='*60}")
     print(f"Processing: {excel_path}")
@@ -943,8 +942,7 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
             spreadsheet_ids = [info['spreadsheet_id'] for info in gs_data.values()]
             print(f"Loaded {len(spreadsheet_ids)} spreadsheets from industry_spreadsheets.json")
         else:
-            spreadsheet_ids = [GOOGLE_SHEET_ID]
-            print(f"Using default spreadsheet: {GOOGLE_SHEET_ID}")
+            raise ValueError("industry_spreadsheets.json not found. Required for --batch mode.")
 
     routing = {}
     for sid in spreadsheet_ids:

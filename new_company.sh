@@ -63,9 +63,13 @@ for industry, data in cfg.items():
     if '$CODE' in [str(c) for c in data.get('codes', [])]:
         print(data['spreadsheet_id'])
         sys.exit(0)
-# fallback to default
-print('1huXdbAgYR2xul5CDtOmuoCjBKGwQu69XB9_AcooRPC0')
-")
+sys.exit(1)
+" 2>/dev/null)
+    if [[ -z "$SPREADSHEET_ID" ]]; then
+        echo "ERROR: Code $CODE not found in industry_spreadsheets.json"
+        echo "Pass --spreadsheet-id to specify the target spreadsheet"
+        exit 1
+    fi
     echo "  Resolved spreadsheet ID: $SPREADSHEET_ID"
 fi
 
