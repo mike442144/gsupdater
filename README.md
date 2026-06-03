@@ -207,3 +207,24 @@ Runs `add_roic_methods.py`, then `wrap_keystats_refs.py` for `Minority Interest`
 python run_rollout.py            # all safe industries
 python run_rollout.py 互联网 食品  # specific industries
 ```
+
+### `gs_rankings.py` — Fetch all ranking data from GS in one pass (recommended)
+
+Reads each company tab **once** and extracts all three dimensions: EV/EBIT, ROIC, and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
+
+```bash
+python gs_rankings.py                                       # all rollout industries
+python gs_rankings.py 互联网 食品                            # specific industries
+python gs_rankings.py --rankings r.csv --payout p.csv       # custom output paths
+```
+
+### `combined_ranking.py` — Master ranking: EV/EBIT + ROIC + Payout Ratio
+
+Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the sum of all three ranks (lower = better). Only companies present in all three dimensions are included. Also reports which companies are missing from one or more dimensions.
+
+```bash
+python combined_ranking.py                              # default inputs
+python combined_ranking.py --rankings r.csv --payout p.csv  # custom inputs
+python combined_ranking.py --output master.csv          # custom output path
+```
+
