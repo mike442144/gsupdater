@@ -466,15 +466,19 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
         for i in range(a, search_end):
             gs_j, gs_year = gs_cols[i]
             if gs_year == year:
-                # Verify it's a pure year, LTM, fiscal year header, or empty
+                # Verify it's a pure year, LTM, fiscal year header, or empty.
+                # Accept a bare Mmm-DD-YYYY date too: users shorten the CIQ
+                # "12 months Feb-01-2026" header to just "Feb-01-2026" for
+                # display, and that abbreviated form must still match/fill.
                 hdr_val = str(gs_header[gs_j]).strip()
+                # Fiscal-year header, with or without the "12 months" prefix.
+                is_fy_header = re.match(r'^(12 months\s+)?[A-Z][a-z]{2}-\d{2}-\d{4}$', hdr_val)
                 if (re.match(r'^\d{4}$', hdr_val)
                     or re.search(r'LTM', hdr_val, re.IGNORECASE)
-                    or re.match(r'^12 months\s', hdr_val)
+                    or is_fy_header
                     or not hdr_val):
                     plan_col_to_gs_col[excel_col_idx] = gs_j
                     # Preserve fiscal year format if GS already has it
-                    is_fy_header = re.match(r'^12 months\s', hdr_val)
                     if gs_header[gs_j] != label and not is_fy_header:
                         header_updates.append((gs_j, label))
                     print(f"  Excel col {excel_col_idx} year {year} ('{label}') → GS col {gs_j} ('{gs_header[gs_j]}') [match]")
