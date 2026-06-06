@@ -35,6 +35,8 @@ def load_rankings(path):
                 'ev_rank': _int(row.get('ev_rank')),
                 'roic': _float(row.get('roic_corrected') or row.get('roic')),
                 'roic_rank': _int(row.get('roic_rank')),
+                'profit_quality': _float(row.get('profit_quality')),
+                'quality_rank': _int(row.get('quality_rank')),
             }
     return data
 
@@ -95,6 +97,8 @@ def main():
             'ev_rank': r.get('ev_rank'),
             'roic': r.get('roic'),
             'roic_rank': r.get('roic_rank'),
+            'profit_quality': r.get('profit_quality'),
+            'quality_rank': r.get('quality_rank'),
             'payout': p.get('payout'),
             'payout_rank': p.get('payout_rank'),
         })
@@ -125,6 +129,7 @@ def main():
     # ── Write CSV ────────────────────────────────────────────────
     fieldnames = ['master_rank', 'industry', 'code', 'company',
                   'ev_ebit', 'ev_rank', 'roic', 'roic_rank',
+                  'profit_quality', 'quality_rank',
                   'payout', 'payout_rank', 'combined']
 
     output_path = os.path.join(here, args.output)
@@ -138,6 +143,8 @@ def main():
                 row['ev_ebit'] = round(row['ev_ebit'], 1)
             if row.get('roic') is not None:
                 row['roic'] = round(row['roic'], 4)
+            if row.get('profit_quality') is not None:
+                row['profit_quality'] = round(row['profit_quality'], 4)
             if row.get('payout') is not None:
                 row['payout'] = round(row['payout'], 4)
             writer.writerow(row)
@@ -148,15 +155,17 @@ def main():
     print(f"{'=' * 120}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
           f"{'ΣRank':>6} {'EV/EBIT':>8} {'R_EV':>5} {'ROIC':>9} {'R_ROIC':>6} "
-          f"{'Payout':>8} {'R_Pay':>6}  Code")
+          f"{'Qual%':>7} {'R_Qual':>7} {'Payout':>8} {'R_Pay':>6}  Code")
     print(f"{'-' * 120}")
     for c in combined:
         ev_s = f"{c['ev_ebit']:.1f}" if c['ev_ebit'] else '-'
         roic_s = f"{c['roic']:.1%}" if c['roic'] else '-'
+        qual_s = f"{c['profit_quality']:.1%}" if c['profit_quality'] else '-'
         pay_s = f"{c['payout']:.1%}" if c['payout'] else '-'
         print(f"{c['master_rank']:>3}  {c['company']:<16} {c['industry']:<8} "
               f"{c['combined']:>6} {ev_s:>8} {c['ev_rank']:>5} "
               f"{roic_s:>9} {c['roic_rank']:>6} "
+              f"{qual_s:>7} {c['quality_rank']:>7} "
               f"{pay_s:>8} {c['payout_rank']:>6}  {c['code']}")
 
     # Stats

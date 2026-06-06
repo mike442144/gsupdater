@@ -263,6 +263,17 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                         and ebit_val is not None and ebit_val > 0):
                     roic_corrected = -roic_val
 
+                # ── Profit Quality: latest annual 扣非/净利润 ─────────
+                net_income_row = item_map.get('net income')
+                kf_row = item_map.get('扣非净利润')
+                profit_quality = None
+                if net_income_row is not None and kf_row is not None and len(year_only_cols) >= 1:
+                    latest_yr_col = max(year_only_cols)
+                    net_income = safe_float(read_cell(rows, net_income_row, latest_yr_col))
+                    kf_net_income = safe_float(read_cell(rows, kf_row, latest_yr_col))
+                    if net_income and net_income != 0:
+                        profit_quality = kf_net_income / net_income
+
                 ev_results.append({
                     'industry': industry, 'code': code, 'company': company,
                     'period': period,
@@ -270,6 +281,7 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                     'ebitda': ebitda_val, 'ebit': ebit_val,
                     'ev_ebit': ev_ebit,
                     'roic': roic_val, 'roic_corrected': roic_corrected,
+                    'profit_quality': profit_quality,
                 })
 
                 # status
@@ -356,6 +368,9 @@ def write_ev_csv(results, path):
                    and r['roic_corrected'] > 0]
     roic_ranked.sort(key=lambda x: -x['roic_corrected'])
 
+    quality_ranked = [r for r in results if r['profit_quality'] is not None]
+    quality_ranked.sort(key=lambda x: -x['profit_quality'])
+
     ev_rank = {}
     for i, r in enumerate(ev_ranked, 1):
         ev_rank[(r['company'], r['industry'])] = i
@@ -366,6 +381,11 @@ def write_ev_csv(results, path):
         roic_rank[(r['company'], r['industry'])] = i
         r['roic_rank'] = i
 
+    quality_rank = {}
+    for i, r in enumerate(quality_ranked, 1):
+        quality_rank[(r['company'], r['industry'])] = i
+        r['quality_rank'] = i
+
     combined = []
     for r in results:
         key = (r['company'], r['industry'])
@@ -374,6 +394,7 @@ def write_ev_csv(results, path):
                 **r,
                 'ev_rank': ev_rank[key],
                 'roic_rank': roic_rank[key],
+                'quality_rank': quality_rank.get(key),
                 'combined': ev_rank[key] + roic_rank[key],
             })
     combined.sort(key=lambda x: x['combined'])
@@ -381,7 +402,7 @@ def write_ev_csv(results, path):
     fieldnames = ['industry', 'code', 'company', 'period',
                   'tev_ebitda', 'ev', 'ebitda', 'ebit',
                   'ev_ebit', 'ev_rank', 'roic', 'roic_corrected',
-                  'roic_rank', 'combined']
+                  'roic_rank', 'profit_quality', 'quality_rank', 'combined']
 
     def _round(r):
         out = dict(r)
@@ -391,7 +412,7 @@ def write_ev_csv(results, path):
         for k in ('ev', 'ebitda', 'ebit'):
             if out.get(k) is not None:
                 out[k] = round(out[k])
-        for k in ('roic', 'roic_corrected'):
+        for k in ('roic', 'roic_corrected', 'profit_quality'):
             if out.get(k) is not None:
                 out[k] = round(out[k], 4)
         return out
@@ -403,7 +424,7 @@ def write_ev_csv(results, path):
         for r in combined:
             writer.writerow(_round(r))
 
-    return ev_ranked, roic_ranked, combined
+    return ev_ranked, roic_ranked, quality_ranked, combined
 
 
 def write_payout_csv(results, path):
@@ -438,15 +459,18 @@ def print_ev_ranking(ev_ranked):
     print(f" EV/EBIT Ranking (low → high, cheaper = better)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
-          f"{'EV/EBIT':>8} {'ROIC':>9}  Code")
+          f"{'EV/EBIT':>8} {'ROIC':>9} {'Qual%':>7}  Code")
     print(f"{'-' * 60}")
     for r in ev_ranked:
         roic_s = '-'
         if r['roic_corrected'] is not None:
             flipped = r['roic'] is not None and r['roic_corrected'] != r['roic']
             roic_s = f"{r['roic_corrected']:.1%}" + ('*' if flipped else '')
+        qual_s = '-'
+        if r['profit_quality'] is not None:
+            qual_s = f"{r['profit_quality']:.1%}"
         print(f"{r['ev_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
-              f"{r['ev_ebit']:>8.1f} {roic_s:>9}  {r['code']}")
+              f"{r['ev_ebit']:>8.1f} {roic_s:>9} {qual_s:>7}  {r['code']}")
 
 
 def print_roic_ranking(roic_ranked):
@@ -454,7 +478,7 @@ def print_roic_ranking(roic_ranked):
     print(f" ROIC Ranking (high → low, * = sign-corrected)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
-          f"{'ROIC':>9} {'EV/EBIT':>8}  Code")
+          f"{'ROIC':>9} {'EV/EBIT':>8} {'Qual%':>7}  Code")
     print(f"{'-' * 60}")
     for r in roic_ranked:
         flipped = r['roic'] is not None and r['roic_corrected'] != r['roic']
@@ -463,8 +487,11 @@ def print_roic_ranking(roic_ranked):
         if r['ev_ebit'] is not None:
             if r['ev_ebit'] > 0 or (r['ebit'] is not None and r['ebit'] > 0):
                 ev_s = f"{r['ev_ebit']:.1f}"
+        qual_s = '-'
+        if r['profit_quality'] is not None:
+            qual_s = f"{r['profit_quality']:.1%}"
         print(f"{r['roic_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
-              f"{roic_s:>9} {ev_s:>8}  {r['code']}")
+              f"{roic_s:>9} {ev_s:>8} {qual_s:>7}  {r['code']}")
 
 
 def print_payout_ranking(ranked):
@@ -487,6 +514,27 @@ def print_payout_ranking(ranked):
               f"{p(r['yr4']):>8} {p(r['yr5']):>8}  {r['years']}")
 
 
+def print_quality_ranking(quality_ranked):
+    print(f"\n{'=' * 90}")
+    print(f" Profit Quality Ranking (扣非净利润/净利润, high → low)")
+    print(f"{'=' * 90}")
+    print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
+          f"{'Qual%':>7} {'ROIC':>9} {'EV/EBIT':>8}  Code")
+    print(f"{'-' * 60}")
+    for r in quality_ranked:
+        qual_s = f"{r['profit_quality']:.1%}"
+        roic_s = '-'
+        if r['roic_corrected'] is not None:
+            flipped = r['roic'] is not None and r['roic_corrected'] != r['roic']
+            roic_s = f"{r['roic_corrected']:.1%}" + ('*' if flipped else '')
+        ev_s = '-'
+        if r['ev_ebit'] is not None:
+            if r['ev_ebit'] > 0 or (r['ebit'] is not None and r['ebit'] > 0):
+                ev_s = f"{r['ev_ebit']:.1f}"
+        print(f"{r['quality_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
+              f"{qual_s:>7} {roic_s:>9} {ev_s:>8}  {r['code']}")
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -496,7 +544,7 @@ def main():
     parser.add_argument('industries', nargs='*',
                         help='Industries to include (default: all rollout)')
     parser.add_argument('--rankings', default=os.path.join(here, 'rankings.csv'),
-                        help='Output: EV/EBIT + ROIC CSV')
+                        help='Output: EV/EBIT + ROIC + Profit Quality CSV')
     parser.add_argument('--payout', default=os.path.join(here, 'payout_rankings.csv'),
                         help='Output: Payout Ratio CSV')
     args = parser.parse_args()
@@ -518,21 +566,23 @@ def main():
         time.sleep(5)
 
     # ── Write CSVs ────────────────────────────────────────────────
-    ev_ranked, roic_ranked, ev_combined = write_ev_csv(ev_results, args.rankings)
+    ev_ranked, roic_ranked, quality_ranked, ev_combined = write_ev_csv(ev_results, args.rankings)
     pay_ranked = write_payout_csv(pay_results, args.payout)
 
     # ── Print summaries ──────────────────────────────────────────
     print_ev_ranking(ev_ranked)
     print_roic_ranking(roic_ranked)
+    print_quality_ranking(quality_ranked)
     print_payout_ranking(pay_ranked)
 
     print(f"\n{'=' * 60}")
     print(f"Summary")
     print(f"{'=' * 60}")
-    print(f"  Fetched: {len(ev_results)} companies for EV/ROIC, "
+    print(f"  Fetched: {len(ev_results)} companies for EV/ROIC/Quality, "
           f"{len(pay_results)} for Payout")
     print(f"  EV/EBIT ranked: {len(ev_ranked)}")
     print(f"  ROIC ranked:    {len(roic_ranked)}")
+    print(f"  Profit Quality ranked: {len(quality_ranked)}")
     print(f"  EV+ROIC combined: {len(ev_combined)}")
     print(f"  Payout ranked:  {len(pay_ranked)}")
     print(f"\n  → {args.rankings}")

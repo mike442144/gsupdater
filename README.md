@@ -210,7 +210,7 @@ python run_rollout.py 互联网 食品  # specific industries
 
 ### `gs_rankings.py` — Fetch all ranking data from GS in one pass (recommended)
 
-Reads each company tab **once** and extracts all three dimensions: EV/EBIT, ROIC, and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
+Reads each company tab **once** and extracts **four dimensions**: EV/EBIT, ROIC, Profit Quality (扣非净利润 / 净利润), and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
 
 ```bash
 python gs_rankings.py                                       # all rollout industries
@@ -218,9 +218,9 @@ python gs_rankings.py 互联网 食品                            # specific ind
 python gs_rankings.py --rankings r.csv --payout p.csv       # custom output paths
 ```
 
-### `combined_ranking.py` — Master ranking: EV/EBIT + ROIC + Payout Ratio
+### `combined_ranking.py` — Master ranking: EV/EBIT + ROIC + Profit Quality + Payout Ratio
 
-Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the sum of all three ranks (lower = better). Only companies present in all three dimensions are included. Also reports which companies are missing from one or more dimensions.
+Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the **sum of EV/EBIT rank + ROIC rank + Payout Ratio rank** (lower = better). Profit Quality is included in `rankings.csv` but not in the combined sum — it serves as a supplemental quality metric to review alongside the master ranking.
 
 ```bash
 python combined_ranking.py                              # default inputs
