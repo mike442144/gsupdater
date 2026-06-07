@@ -220,11 +220,17 @@ python gs_rankings.py --rankings r.csv --payout p.csv       # custom output path
 
 ### `combined_ranking.py` — Master ranking: EV/EBIT + ROIC + Profit Quality + Payout Ratio
 
-Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the **sum of EV/EBIT rank + ROIC rank + Payout Ratio rank** (lower = better). Profit Quality is included in `rankings.csv` but not in the combined sum — it serves as a supplemental quality metric to review alongside the master ranking.
+Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the **sum of all four ranks**: EV/EBIT rank + ROIC rank + Profit Quality rank + Payout Ratio rank (lower = better). Only companies with all four ranks are included in the master ranking.
 
 ```bash
 python combined_ranking.py                              # default inputs
 python combined_ranking.py --rankings r.csv --payout p.csv  # custom inputs
 python combined_ranking.py --output master.csv          # custom output path
 ```
+
+Each dimension is ranked independently:
+- EV/EBIT: low → high (cheaper = better)
+- ROIC: high → low (more efficient = better)
+- Profit Quality (扣非净利润/净利润): high → low (more stable earnings = better)
+- Payout Ratio (5-yr aggregate): high → low (more generous = better)
 
