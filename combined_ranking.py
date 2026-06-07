@@ -103,12 +103,12 @@ def main():
             'payout_rank': p.get('payout_rank'),
         })
 
-    # Combined score: sum of all three ranks (lower = better)
-    # Only include companies that have ALL three ranks
+    # Combined score: sum of all four ranks (lower = better)
+    # Only include companies that have ALL four ranks
     combined = []
     for m in merged:
-        if m['ev_rank'] and m['roic_rank'] and m['payout_rank']:
-            m['combined'] = m['ev_rank'] + m['roic_rank'] + m['payout_rank']
+        if m['ev_rank'] and m['roic_rank'] and m['quality_rank'] and m['payout_rank']:
+            m['combined'] = m['ev_rank'] + m['roic_rank'] + m['quality_rank'] + m['payout_rank']
             combined.append(m)
     combined.sort(key=lambda x: x['combined'])
     for i, c in enumerate(combined, 1):
@@ -125,6 +125,10 @@ def main():
     # Payout only ranking
     payout_only = [m for m in merged if m['payout_rank']]
     payout_only.sort(key=lambda x: x['payout_rank'])
+
+    # Profit Quality only ranking
+    quality_only = [m for m in merged if m['quality_rank']]
+    quality_only.sort(key=lambda x: x['quality_rank'])
 
     # ── Write CSV ────────────────────────────────────────────────
     fieldnames = ['master_rank', 'industry', 'code', 'company',
@@ -151,11 +155,11 @@ def main():
 
     # ── Print: Master combined ranking ───────────────────────────
     print(f"\n{'=' * 120}")
-    print(f" Master Ranking (EV/EBIT rank + ROIC rank + Payout Ratio rank)")
+    print(f" Master Ranking (EV/EBIT rank + ROIC rank + Profit Quality rank + Payout Ratio rank)")
     print(f"{'=' * 120}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
           f"{'ΣRank':>6} {'EV/EBIT':>8} {'R_EV':>5} {'ROIC':>9} {'R_ROIC':>6} "
-          f"{'Qual%':>7} {'R_Qual':>7} {'Payout':>8} {'R_Pay':>6}  Code")
+          f"{'Qual%':>7} {'R_Qual':>6} {'Payout':>8} {'R_Pay':>6}  Code")
     print(f"{'-' * 120}")
     for c in combined:
         ev_s = f"{c['ev_ebit']:.1f}" if c['ev_ebit'] else '-'
@@ -165,7 +169,7 @@ def main():
         print(f"{c['master_rank']:>3}  {c['company']:<16} {c['industry']:<8} "
               f"{c['combined']:>6} {ev_s:>8} {c['ev_rank']:>5} "
               f"{roic_s:>9} {c['roic_rank']:>6} "
-              f"{qual_s:>7} {c['quality_rank']:>7} "
+              f"{qual_s:>7} {c['quality_rank']:>6} "
               f"{pay_s:>8} {c['payout_rank']:>6}  {c['code']}")
 
     # Stats
@@ -173,12 +177,12 @@ def main():
     in_ev = len(ev_only)
     in_roic = len(roic_only)
     in_pay = len(payout_only)
-    missing_pay = [m for m in merged if m['ev_rank'] and m['roic_rank'] and not m['payout_rank']]
+    missing_pay = [m for m in merged if m['ev_rank'] and m['roic_rank'] and m['quality_rank'] and not m['payout_rank']]
     missing_ev = [m for m in merged if m['payout_rank'] and not m['ev_rank']]
 
     print(f"\nTotal: {len(all_keys)} companies | "
-          f"EV/EBIT: {in_ev} | ROIC: {in_roic} | Payout: {in_pay} | "
-          f"Combined (all 3): {in_all}")
+          f"EV/EBIT: {in_ev} | ROIC: {in_roic} | Profit Quality: {len(quality_only)} | Payout: {in_pay} | "
+          f"Combined (all 4): {in_all}")
 
     if missing_pay:
         print(f"\nCompanies with EV/EBIT+ROIC but missing Payout ({len(missing_pay)}):")
