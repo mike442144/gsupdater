@@ -273,6 +273,9 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                     kf_net_income = safe_float(read_cell(rows, kf_row, latest_yr_col))
                     if net_income and net_income != 0:
                         profit_quality = kf_net_income / net_income
+                        # Exclude extreme outliers: <0.5 or >1.5
+                        if profit_quality < 0.5 or profit_quality > 1.5:
+                            profit_quality = None
 
                 ev_results.append({
                     'industry': industry, 'code': code, 'company': company,
