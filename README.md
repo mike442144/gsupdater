@@ -140,13 +140,14 @@ python add_yoy_section.py --spreadsheet-id <ID> --sheet "公司财务"
 python add_yoy_section.py --spreadsheet-id <ID> --sheet "公司财务" --dry-run  # preview only
 ```
 
-### `fix_summary_formulas.py` — Fix Summary INDIRECT row refs after YoY insertion
+### `fix_summary_formulas.py` — Fix Summary INDIRECT row refs after a row insertion
 
-When `add_yoy_section.py` inserts a sub-header row, Key Stats items shift down and Summary INDIRECT formulas referencing those rows become stale. This script increments the row refs (rows >= 3) in Summary to match.
+When a row is inserted in the company tabs, items at/below it shift down and Summary INDIRECT formulas referencing those rows become stale. This script increments the row refs (rows >= `--after-row`) in Summary to match. `--after-row` is the insertion position; it defaults to `3` (the YoY `盈利指标` sub-header from `add_yoy_section.py`). Pass `--after-row 6` for the Net Income to Company row.
 
 ```bash
-python fix_summary_formulas.py --spreadsheet-id <ID>
-python fix_summary_formulas.py --spreadsheet-id <ID> --dry-run  # preview only
+python fix_summary_formulas.py --spreadsheet-id <ID>                  # YoY (row 3)
+python fix_summary_formulas.py --spreadsheet-id <ID> --after-row 6    # Net Income to Company
+python fix_summary_formulas.py --spreadsheet-id <ID> --dry-run        # preview only
 ```
 
 ### `add_roic_methods.py` — Add the three ROIC methods to existing tabs

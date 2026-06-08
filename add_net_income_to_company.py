@@ -3,10 +3,14 @@
 Add a "Net Income to Company" row to each company tab's Key Stats section,
 right below the "Net Income" row.
 
-    Net Income to Company = Net Income - Minority Interest
+The Key Stats row pulls the value straight from the Income Statement's existing
+"Net Income to Company" item (same column):
 
-Minority Interest is N()-wrapped so CIQ's '-' nil marker (zero-value) coerces to 0.
-IFERROR blanks the cell when the calculation yields an error.
+    =IFERROR(<col><Net Income to Company row>,)
+
+IFERROR blanks the cell when that item can't be resolved. The row is added to
+every company tab (with or without Minority Interest) so the Summary page can
+reference it uniformly.
 
 Anchor = Net Income row. Since this inserts between Net Income and Gross Margin,
 all Key Stats items after Net Income shift down by 1 row. This affects Summary
@@ -38,8 +42,8 @@ SECTION_HEADERS = {'income statement', 'balance sheet', 'cash flow',
 SUB_SECTIONS = {'盈利指标', '同比增速'}
 
 NET_INCOME_TO_COMPANY_LABEL = "Net Income to Company"
-# Direct reference to Income Statement's "Net Income to Company" item.
-# {Item} -> row of that item name. IFERROR(...,) -> blank if item not found.
+# Direct reference to the Income Statement's "Net Income to Company" item.
+# __C__{Item} -> <current col><row of that item>. IFERROR(...,) -> blank if not found.
 NET_INCOME_TO_COMPANY_TEMPLATE = "=IFERROR(__C__{Net Income to Company},)"
 NUMBER_FORMAT = {"type": "NUMBER", "pattern": "#,##0"}
 
@@ -93,13 +97,12 @@ def get_company_sheets(service, spreadsheet_id):
 
 
 def scan_tab(service, spreadsheet_id, sheet_name):
-    """Return (item_to_row, net_income_to_company_row, anchor_row, label_col, has_minority).
+    """Return (item_to_row, net_income_to_company_row, anchor_row, label_col).
 
     item_to_row: full name->0idx row map (last-wins, all sections) for formula refs.
     net_income_to_company_row: 0-indexed row of existing 'Net Income to Company' Key Stats item, else None.
     anchor_row: 0-indexed row of 'Net Income' to insert after.
     label_col: 0-indexed column where the anchor's label sits (1=B or 2=C).
-    has_minority: True if Minority Interest is present (required for the formula).
     """
     result = _retry(lambda: service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id, range=f"'{sheet_name}'!A1:C300"
@@ -110,7 +113,6 @@ def scan_tab(service, spreadsheet_id, sheet_name):
     net_income_to_company_row = None
     net_income_row = None
     ni_col = 2
-    has_minority = False
     current_section = None
 
     for i, row in enumerate(rows):
@@ -134,14 +136,12 @@ def scan_tab(service, spreadsheet_id, sheet_name):
             elif low == 'net income':
                 net_income_row = i
                 ni_col = 2 if c else 1
-            elif low == 'minority interest':
-                has_minority = True
 
     if net_income_row is None:
         anchor_row, label_col = None, 2
     else:
         anchor_row, label_col = net_income_row, ni_col
-    return item_to_row, net_income_to_company_row, anchor_row, label_col, has_minority
+    return item_to_row, net_income_to_company_row, anchor_row, label_col
 
 
 def find_data_columns(service, spreadsheet_id, sheet_name):
@@ -193,15 +193,11 @@ def resolve_formula(template, col_letter, item_to_row, sheet_name):
 
 
 def process_tab(service, spreadsheet_id, sheet_name, sheet_id, dry_run):
-    item_to_row, net_income_to_company_row, anchor_row, label_col, has_minority = scan_tab(
+    item_to_row, net_income_to_company_row, anchor_row, label_col = scan_tab(
         service, spreadsheet_id, sheet_name)
 
     if anchor_row is None:
         print(f"  {sheet_name}: SKIP — no Net Income row in Key Stats")
-        return 'skip'
-
-    if not has_minority:
-        print(f"  {sheet_name}: SKIP — no Minority Interest item (required)")
         return 'skip'
 
     data_cols = find_data_columns(service, spreadsheet_id, sheet_name)

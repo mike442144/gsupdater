@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Fix Summary sheet INDIRECT formulas after inserting Net Income to Company row.
+Fix the Summary "自由现金流/净利润" ratio after the Net Income to Company row exists.
 
-When add_net_income_to_company.py inserts the "Net Income to Company" row after
-"Net Income", all Key Stats items that were originally after Net Income shift
-down by 1 row. Summary INDIRECT formulas still reference old row numbers and need +1.
-
-Also updates the "自由现金流/净利润" ratio to use "Net Income to Company" as denominator.
+Run order: (1) add_net_income_to_company.py inserts the row in each company tab,
+(2) the row-index +1 script fixes Summary INDIRECT refs for the shift, (3) this
+script renames the ratio "自由现金流/净利润" -> "自由现金流/公司净利润" and repoints its
+denominator from Net Income (company-tab row N) to Net Income to Company (row N+1).
 
 Usage:
     python fix_summary_net_income_refs.py --spreadsheet-id <id>
@@ -58,22 +57,20 @@ def find_net_income_row(service, spreadsheet_id, sheet_name):
     return None
 
 
-def increment_formula_row(formula, min_row):
-    """Increment row numbers only after '!' in INDIRECT string references.
+def retarget_net_income_row(formula, ni_row, ni_to_company_row):
+    """Repoint a ratio's Net Income denominator to the Net Income to Company row.
 
-    Only increments rows >= min_row because the insertion happens at min_row.
+    Swaps cell-ref row `ni_row` -> `ni_to_company_row` inside "'...财务'!<refs>"
+    INDIRECT bodies. Only the denominator references ni_row (the numerator is the
+    FCFF row), so swapping that row number is safe.
     """
     def replace_row(m):
-        n = int(m.group(2))
-        if n < min_row:
-            return m.group(0)
-        return f'{m.group(1)}{n + 1}'
+        if int(m.group(2)) == ni_row:
+            return f'{m.group(1)}{ni_to_company_row}'
+        return m.group(0)
 
     def fix_indirect(m):
-        prefix = m.group(1)
-        cell_ref = m.group(2)
-        cell_ref = re.sub(r'(\$?[A-Z]{1,3}\$?)(\d+)', replace_row, cell_ref)
-        return prefix + cell_ref
+        return m.group(1) + re.sub(r'(\$?[A-Z]{1,3}\$?)(\d+)', replace_row, m.group(2))
 
     return re.sub(r"('[^']*'!)([^)\"]+)", fix_indirect, formula)
 
@@ -107,16 +104,22 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
         print("ERROR: No company sheets found")
         return False
 
-    # Find Net Income row in the first company sheet (they should all be the same)
-    example_sheet = company_sheets[0]
-    net_income_row = find_net_income_row(service, spreadsheet_id, example_sheet)
+    # Find Net Income row in the first company sheet that has one (skips non-financial
+    # tabs that come before the financial tabs in MIXED industries). All financial tabs
+    # share the same layout, so the first match is representative.
+    net_income_row = None
+    for example_sheet in company_sheets:
+        net_income_row = find_net_income_row(service, spreadsheet_id, example_sheet)
+        if net_income_row is not None:
+            break
 
     if net_income_row is None:
-        print(f"ERROR: Could not find Net Income row in {example_sheet}")
+        print("ERROR: Could not find Net Income row in any company tab")
         return False
 
-    print(f"  Net Income is at row {net_income_row + 1} in company tabs")
-    print(f"  Insertion happens after row {net_income_row + 1}, so rows >= {net_income_row + 2} shift down")
+    ni_row = net_income_row + 1             # 1-indexed Net Income row in company tabs
+    ni_to_company_row = net_income_row + 2  # 1-indexed Net Income to Company row (Net Income + 1)
+    print(f"  Net Income at row {ni_row}, Net Income to Company at row {ni_to_company_row} in company tabs")
 
     # Read all Summary cells with formulas
     result = service.spreadsheets().get(
@@ -132,78 +135,43 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
 
     row_data = sheets_data[0].get('data', [{}])[0].get('rowData', [])
 
-    # Collect cells that need fixing
-    updates = []
+    # In each "自由现金流/净利润" ratio row: rename the label and repoint the denominator
+    # from Net Income to Net Income to Company. The label sits in an early column;
+    # the ratio formulas follow in the data columns of the same row.
     fcf_ratio_updates = []
     fcf_label_updates = []
-
     for i, row in enumerate(row_data):
         values = row.get('values', [])
+        is_fcf_ratio = any(c.get('userEnteredValue', {}).get('stringValue')
+                           in ('自由现金流/净利润', '自由现金流/公司净利润') for c in values)
+        if not is_fcf_ratio:
+            continue
         for j, cell in enumerate(values):
             uev = cell.get('userEnteredValue', {})
-            fv = uev.get('formulaValue', '')
-
-            # Fix INDIRECT formulas
-            if 'INDIRECT' in fv:
-                new_fv = increment_formula_row(fv, net_income_row + 2)  # 1-indexed
-                if new_fv != fv:
-                    updates.append((i, j, fv, new_fv))
-                    continue
-
-            # Look for "自由现金流/净利润" label to change to "自由现金流/公司净利润"
-            if 'stringValue' in uev and uev['stringValue'] == '自由现金流/净利润':
+            if uev.get('stringValue') == '自由现金流/净利润':
                 fcf_label_updates.append((i, j, '自由现金流/净利润', '自由现金流/公司净利润'))
-
-    print(f"  Found {len(updates)} INDIRECT formulas to fix")
-    print(f"  Found {len(fcf_label_updates)} labels to update")
-
-    # Also need to update FCF/Net Income ratio formula to use Net Income to Company
-    # First, find where "Net Income to Company" is now (Net Income row + 1)
-    net_income_to_company_row = net_income_row + 1  # 0-indexed
-
-    # Now find and update FCF/Net Income formulas
-    for i, row in enumerate(row_data):
-        values = row.get('values', [])
-        for j, cell in enumerate(values):
-            uev = cell.get('userEnteredValue', {})
+                continue
             fv = uev.get('formulaValue', '')
-
             if fv and 'INDIRECT' in fv:
-                # Check if this is a free cash flow / net income ratio
-                # We look for formulas that reference Net Income
-                if f"!C{net_income_row + 1}" in fv or f"!C{net_income_row + 2}" in fv:
-                    # This might be the FCF/Net Income ratio
-                    # Replace Net Income reference with Net Income to Company
-                    old_net_income_ref = f"!C{net_income_row + 2}"  # 1-indexed after shift
-                    new_net_income_ref = f"!C{net_income_to_company_row + 2}"  # Net Income to Company row
+                new_fv = retarget_net_income_row(fv, ni_row, ni_to_company_row)
+                if new_fv != fv:
+                    fcf_ratio_updates.append((i, j, fv, new_fv))
 
-                    if old_net_income_ref in fv:
-                        new_fv = fv.replace(old_net_income_ref, new_net_income_ref)
-                        if new_fv != fv:
-                            fcf_ratio_updates.append((i, j, fv, new_fv))
+    print(f"  Found {len(fcf_ratio_updates)} ratio formulas and {len(fcf_label_updates)} labels to update")
 
-    print(f"  Found {len(fcf_ratio_updates)} FCF/Net Income ratio formulas to update")
-
-    if not updates and not fcf_label_updates and not fcf_ratio_updates:
-        print("  Nothing to fix")
+    if not fcf_ratio_updates and not fcf_label_updates:
+        print("  Nothing to fix (ratio already points at Net Income to Company?)")
         return True
 
     # Show samples
-    if updates:
-        print(f"\n  INDIRECT formula fixes (first 3):")
-        for i, j, old, new in updates[:3]:
-            print(f"    Row {i+1} Col {j}:")
-            print(f"      OLD: {old}")
-            print(f"      NEW: {new}")
-        if len(updates) > 3:
-            print(f"    ... and {len(updates) - 3} more")
-
     if fcf_ratio_updates:
-        print(f"\n  FCF/Net Income ratio updates:")
-        for i, j, old, new in fcf_ratio_updates:
+        print(f"\n  Ratio formula updates (first 3):")
+        for i, j, old, new in fcf_ratio_updates[:3]:
             print(f"    Row {i+1} Col {j}:")
             print(f"      OLD: {old}")
             print(f"      NEW: {new}")
+        if len(fcf_ratio_updates) > 3:
+            print(f"    ... and {len(fcf_ratio_updates) - 3} more")
 
     if fcf_label_updates:
         print(f"\n  Label updates:")
@@ -211,30 +179,11 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
             print(f"    Row {i+1} Col {j}: '{old}' → '{new}'")
 
     if dry_run:
-        total = len(updates) + len(fcf_ratio_updates) + len(fcf_label_updates)
-        print(f"\n  [DRY RUN] Would fix {total} cells")
+        print(f"\n  [DRY RUN] Would fix {len(fcf_ratio_updates) + len(fcf_label_updates)} cells")
         return True
 
     # Build batch update requests
     requests = []
-
-    # Fix INDIRECT formulas
-    for i, j, _, new_fv in updates:
-        requests.append({
-            'updateCells': {
-                'range': {
-                    'sheetId': summary_sheet_id,
-                    'startRowIndex': i,
-                    'endRowIndex': i + 1,
-                    'startColumnIndex': j,
-                    'endColumnIndex': j + 1,
-                },
-                'rows': [{'values': [{
-                    'userEnteredValue': {'formulaValue': new_fv},
-                }]}],
-                'fields': 'userEnteredValue',
-            }
-        })
 
     # Fix FCF ratio formulas
     for i, j, _, new_fv in fcf_ratio_updates:
@@ -277,9 +226,7 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
         body={'requests': requests}
     ).execute()
 
-    print(f"\n  Fixed {len(updates)} INDIRECT formulas (row refs +1)")
-    print(f"  Updated {len(fcf_ratio_updates)} FCF ratio formulas")
-    print(f"  Updated {len(fcf_label_updates)} labels")
+    print(f"\n  Updated {len(fcf_ratio_updates)} ratio formulas and {len(fcf_label_updates)} labels")
     return True
 
 

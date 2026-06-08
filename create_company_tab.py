@@ -34,6 +34,7 @@ GOOGLE_TOKEN_PATH = os.path.expanduser('~/.hermes/google_token.json')
 KEY_STATS_ITEMS = [
     "Net-nets",
     "Net Income",
+    "Net Income to Company",
     "Gross Margin",
     "Op. Margin",
     "Net Margin",
@@ -88,6 +89,12 @@ FORMULA_TEMPLATES = {
     },
     "Net Income": {
         "formula": "=__C__{Net Income}",
+        "format": {"type": "NUMBER", "pattern": "#,##0"},
+    },
+    # Pulls the Income Statement's "Net Income to Company" line; IFERROR blanks it
+    # if absent. Matches add_net_income_to_company.py so new and retrofitted tabs align.
+    "Net Income to Company": {
+        "formula": "=IFERROR(__C__{Net Income to Company},)",
         "format": {"type": "NUMBER", "pattern": "#,##0"},
     },
     "Gross Margin": {

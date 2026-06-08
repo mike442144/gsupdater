@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Fix Summary sheet INDIRECT formulas after YoY section insertion.
+Fix Summary sheet INDIRECT formulas after a row is inserted in the company tabs.
 
-When add_yoy_section.py inserts the "盈利指标" sub-header row,
-all Key Stats items shift down by 1 row. Summary INDIRECT formulas
-still reference old row numbers and need +1.
+When a row is inserted at position --after-row, all company-tab items at or below
+it shift down by 1. Summary INDIRECT formulas still reference old row numbers and
+need +1 for rows >= --after-row. Defaults to row 3 (the YoY "盈利指标" sub-header
+from add_yoy_section.py); pass --after-row 6 for the Net Income to Company row.
 
 Usage:
-    python fix_summary_formulas.py --spreadsheet-id <id>
+    python fix_summary_formulas.py --spreadsheet-id <id>                  # YoY (row 3)
+    python fix_summary_formulas.py --spreadsheet-id <id> --after-row 6    # Net Income to Company
     python fix_summary_formulas.py --spreadsheet-id <id> --dry-run
 """
 
@@ -29,15 +31,15 @@ def get_service():
     return build('sheets', 'v4', credentials=creds)
 
 
-def increment_formula_row(formula):
+def increment_formula_row(formula, after_row):
     """Increment row numbers only after '!' in INDIRECT string references.
 
-    Only increments rows >= 3 because the YoY insertion happens at row 3
-    (after the Key Stats header at row 2). Rows 1-2 are unaffected.
+    Increments rows >= after_row (the position where the new row was inserted);
+    rows above the insertion point are unaffected.
     """
     def replace_row(m):
         n = int(m.group(2))
-        if n < 3:
+        if n < after_row:
             return m.group(0)
         return f'{m.group(1)}{n + 1}'
 
@@ -50,9 +52,9 @@ def increment_formula_row(formula):
     return re.sub(r"('[^']*'!)([^)\"]+)", fix_indirect, formula)
 
 
-def fix_summary(service, spreadsheet_id, dry_run=False):
+def fix_summary(service, spreadsheet_id, dry_run=False, after_row=3):
     print(f"\n{'='*60}")
-    print(f"Fixing Summary INDIRECT formulas")
+    print(f"Fixing Summary INDIRECT formulas (rows >= {after_row} shift +1)")
     print(f"Spreadsheet: {spreadsheet_id[:30]}...")
     print(f"{'='*60}")
 
@@ -92,7 +94,7 @@ def fix_summary(service, spreadsheet_id, dry_run=False):
             uev = cell.get('userEnteredValue', {})
             fv = uev.get('formulaValue', '')
             if 'INDIRECT' in fv:
-                new_fv = increment_formula_row(fv)
+                new_fv = increment_formula_row(fv, after_row)
                 if new_fv != fv:
                     updates.append((i, j, fv, new_fv))
 
@@ -144,10 +146,12 @@ def main():
     parser = argparse.ArgumentParser(description='Fix Summary INDIRECT formula row refs after YoY insertion')
     parser.add_argument('--spreadsheet-id', required=True, help='Google Spreadsheet ID')
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
+    parser.add_argument('--after-row', type=int, default=3,
+                        help='Insertion position; rows >= this shift +1 (default 3 = YoY section)')
     args = parser.parse_args()
 
     service = get_service()
-    success = fix_summary(service, args.spreadsheet_id, dry_run=args.dry_run)
+    success = fix_summary(service, args.spreadsheet_id, dry_run=args.dry_run, after_row=args.after_row)
     sys.exit(0 if success else 1)
 
 
