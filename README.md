@@ -211,7 +211,7 @@ python run_rollout.py 互联网 食品  # specific industries
 
 ### `gs_rankings.py` — Fetch all ranking data from GS in one pass (recommended)
 
-Reads each company tab **once** and extracts **four dimensions**: EV/EBIT, ROIC, Profit Quality (扣非净利润 / 净利润), and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
+Reads each company tab **once** and extracts **six dimensions**: EV/EBIT, ROIC, Profit Quality (扣非净利润 / 净利润), FCF Ratio (自由现金流 / 公司净利润), Capex Ratio (|资本开支| / 经营活动现金流), and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
 
 ```bash
 python gs_rankings.py                                       # all rollout industries
@@ -219,19 +219,30 @@ python gs_rankings.py 互联网 食品                            # specific ind
 python gs_rankings.py --rankings r.csv --payout p.csv       # custom output paths
 ```
 
-### `combined_ranking.py` — Master ranking: EV/EBIT + ROIC + Profit Quality + Payout Ratio
+### `combined_ranking.py` — Master ranking
 
-Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the **sum of all four ranks**: EV/EBIT rank + ROIC rank + Profit Quality rank + Payout Ratio rank (lower = better). Only companies with all four ranks are included in the master ranking.
+Merges `rankings.csv` and `payout_rankings.csv` into one master ranking. The combined score is the **sum of selected ranks** (lower = better). Use `--preset` to choose which dimensions to include:
+
+| Preset | Dimensions |
+|---|---|
+| `full` (default) | EV/EBIT + ROIC + Profit Quality + FCF Ratio + Capex Ratio + Payout (all 6) |
+| `classic` | EV/EBIT + ROIC + Profit Quality + Payout (original 4) |
+| `fcf4` | EV/EBIT + ROIC + FCF Ratio + Payout |
+| `fcf5` | EV/EBIT + ROIC + FCF Ratio + Capex Ratio + Payout |
 
 ```bash
-python combined_ranking.py                              # default inputs
-python combined_ranking.py --rankings r.csv --payout p.csv  # custom inputs
-python combined_ranking.py --output master.csv          # custom output path
+python combined_ranking.py                              # default: all 6 dims
+python combined_ranking.py --preset classic              # original 4 dims
+python combined_ranking.py --preset fcf4                 # no profit quality
+python combined_ranking.py --preset fcf5                 # FCF + Capex, no profit quality
+python combined_ranking.py --output fcf4.csv --preset fcf4  # custom output
 ```
 
 Each dimension is ranked independently:
 - EV/EBIT: low → high (cheaper = better)
 - ROIC: high → low (more efficient = better)
 - Profit Quality (扣非净利润/净利润): high → low (more stable earnings = better)
+- FCF Ratio (自由现金流/公司净利润): high → low (better cash conversion = better)
+- Capex Ratio (|资本开支|/经营活动现金流): low → high (lower capex intensity = better)
 - Payout Ratio (5-yr aggregate): high → low (more generous = better)
 

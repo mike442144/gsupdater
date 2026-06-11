@@ -271,11 +271,33 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                     latest_yr_col = max(year_only_cols)
                     net_income = safe_float(read_cell(rows, net_income_row, latest_yr_col))
                     kf_net_income = safe_float(read_cell(rows, kf_row, latest_yr_col))
-                    if net_income and net_income != 0:
+                    if net_income and net_income != 0 and kf_net_income is not None:
                         profit_quality = kf_net_income / net_income
                         # Exclude extreme outliers: <0.5 or >1.5
                         if profit_quality < 0.5 or profit_quality > 1.5:
                             profit_quality = None
+
+                # ── FCF Ratio: latest annual FCFF / Net Income to Company ─
+                fcff_row = item_map.get('fcff')
+                nic_row = item_map.get('net income to company')
+                fcf_ratio = None
+                if fcff_row is not None and nic_row is not None and len(year_only_cols) >= 1:
+                    latest_yr_col = max(year_only_cols)
+                    fcff_val = safe_float(read_cell(rows, fcff_row, latest_yr_col))
+                    nic_val = safe_float(read_cell(rows, nic_row, latest_yr_col))
+                    if fcff_val is not None and nic_val and nic_val != 0:
+                        fcf_ratio = fcff_val / nic_val
+
+                # ── Capex Ratio: |Capital Expenditure| / Cash from Ops. ─
+                capex_row = item_map.get('capital expenditure')
+                ocf_row = item_map.get('cash from ops.')
+                capex_ratio = None
+                if capex_row is not None and ocf_row is not None and len(year_only_cols) >= 1:
+                    latest_yr_col = max(year_only_cols)
+                    capex_val = safe_float(read_cell(rows, capex_row, latest_yr_col))
+                    ocf_val = safe_float(read_cell(rows, ocf_row, latest_yr_col))
+                    if capex_val is not None and ocf_val and ocf_val != 0:
+                        capex_ratio = abs(capex_val) / ocf_val
 
                 ev_results.append({
                     'industry': industry, 'code': code, 'company': company,
@@ -285,6 +307,8 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                     'ev_ebit': ev_ebit,
                     'roic': roic_val, 'roic_corrected': roic_corrected,
                     'profit_quality': profit_quality,
+                    'fcf_ratio': fcf_ratio,
+                    'capex_ratio': capex_ratio,
                 })
 
                 # status
@@ -374,6 +398,12 @@ def write_ev_csv(results, path):
     quality_ranked = [r for r in results if r['profit_quality'] is not None]
     quality_ranked.sort(key=lambda x: -x['profit_quality'])
 
+    fcf_ranked = [r for r in results if r['fcf_ratio'] is not None]
+    fcf_ranked.sort(key=lambda x: -x['fcf_ratio'])
+
+    capex_ranked = [r for r in results if r['capex_ratio'] is not None]
+    capex_ranked.sort(key=lambda x: x['capex_ratio'])
+
     ev_rank = {}
     for i, r in enumerate(ev_ranked, 1):
         ev_rank[(r['company'], r['industry'])] = i
@@ -389,6 +419,16 @@ def write_ev_csv(results, path):
         quality_rank[(r['company'], r['industry'])] = i
         r['quality_rank'] = i
 
+    fcf_rank = {}
+    for i, r in enumerate(fcf_ranked, 1):
+        fcf_rank[(r['company'], r['industry'])] = i
+        r['fcf_rank'] = i
+
+    capex_rank = {}
+    for i, r in enumerate(capex_ranked, 1):
+        capex_rank[(r['company'], r['industry'])] = i
+        r['capex_rank'] = i
+
     combined = []
     for r in results:
         key = (r['company'], r['industry'])
@@ -398,6 +438,8 @@ def write_ev_csv(results, path):
                 'ev_rank': ev_rank[key],
                 'roic_rank': roic_rank[key],
                 'quality_rank': quality_rank.get(key),
+                'fcf_rank': fcf_rank.get(key),
+                'capex_rank': capex_rank.get(key),
                 'combined': ev_rank[key] + roic_rank[key],
             })
     combined.sort(key=lambda x: x['combined'])
@@ -405,7 +447,9 @@ def write_ev_csv(results, path):
     fieldnames = ['industry', 'code', 'company', 'period',
                   'tev_ebitda', 'ev', 'ebitda', 'ebit',
                   'ev_ebit', 'ev_rank', 'roic', 'roic_corrected',
-                  'roic_rank', 'profit_quality', 'quality_rank', 'combined']
+                  'roic_rank', 'profit_quality', 'quality_rank',
+                  'fcf_ratio', 'fcf_rank',
+                  'capex_ratio', 'capex_rank', 'combined']
 
     def _round(r):
         out = dict(r)
@@ -415,7 +459,7 @@ def write_ev_csv(results, path):
         for k in ('ev', 'ebitda', 'ebit'):
             if out.get(k) is not None:
                 out[k] = round(out[k])
-        for k in ('roic', 'roic_corrected', 'profit_quality'):
+        for k in ('roic', 'roic_corrected', 'profit_quality', 'fcf_ratio', 'capex_ratio'):
             if out.get(k) is not None:
                 out[k] = round(out[k], 4)
         return out
@@ -427,7 +471,7 @@ def write_ev_csv(results, path):
         for r in combined:
             writer.writerow(_round(r))
 
-    return ev_ranked, roic_ranked, quality_ranked, combined
+    return ev_ranked, roic_ranked, quality_ranked, fcf_ranked, capex_ranked, combined
 
 
 def write_payout_csv(results, path):
@@ -538,6 +582,48 @@ def print_quality_ranking(quality_ranked):
               f"{qual_s:>7} {roic_s:>9} {ev_s:>8}  {r['code']}")
 
 
+def print_fcf_ratio_ranking(fcf_ranked):
+    print(f"\n{'=' * 90}")
+    print(f" FCF Ratio Ranking (自由现金流/公司净利润, high → low)")
+    print(f"{'=' * 90}")
+    print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
+          f"{'FCF%':>7} {'ROIC':>9} {'EV/EBIT':>8}  Code")
+    print(f"{'-' * 60}")
+    for r in fcf_ranked:
+        fcf_s = f"{r['fcf_ratio']:.1%}"
+        roic_s = '-'
+        if r['roic_corrected'] is not None:
+            flipped = r['roic'] is not None and r['roic_corrected'] != r['roic']
+            roic_s = f"{r['roic_corrected']:.1%}" + ('*' if flipped else '')
+        ev_s = '-'
+        if r['ev_ebit'] is not None:
+            if r['ev_ebit'] > 0 or (r['ebit'] is not None and r['ebit'] > 0):
+                ev_s = f"{r['ev_ebit']:.1f}"
+        print(f"{r['fcf_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
+              f"{fcf_s:>7} {roic_s:>9} {ev_s:>8}  {r['code']}")
+
+
+def print_capex_ratio_ranking(capex_ranked):
+    print(f"\n{'=' * 90}")
+    print(f" Capex Ratio Ranking (资本开支/经营活动现金流, low → high)")
+    print(f"{'=' * 90}")
+    print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
+          f"{'Capex%':>7} {'ROIC':>9} {'EV/EBIT':>8}  Code")
+    print(f"{'-' * 60}")
+    for r in capex_ranked:
+        capex_s = f"{r['capex_ratio']:.1%}"
+        roic_s = '-'
+        if r['roic_corrected'] is not None:
+            flipped = r['roic'] is not None and r['roic_corrected'] != r['roic']
+            roic_s = f"{r['roic_corrected']:.1%}" + ('*' if flipped else '')
+        ev_s = '-'
+        if r['ev_ebit'] is not None:
+            if r['ev_ebit'] > 0 or (r['ebit'] is not None and r['ebit'] > 0):
+                ev_s = f"{r['ev_ebit']:.1f}"
+        print(f"{r['capex_rank']:>3}  {r['company']:<16} {r['industry']:<8} "
+              f"{capex_s:>7} {roic_s:>9} {ev_s:>8}  {r['code']}")
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -569,23 +655,27 @@ def main():
         time.sleep(5)
 
     # ── Write CSVs ────────────────────────────────────────────────
-    ev_ranked, roic_ranked, quality_ranked, ev_combined = write_ev_csv(ev_results, args.rankings)
+    ev_ranked, roic_ranked, quality_ranked, fcf_ranked, capex_ranked, ev_combined = write_ev_csv(ev_results, args.rankings)
     pay_ranked = write_payout_csv(pay_results, args.payout)
 
     # ── Print summaries ──────────────────────────────────────────
     print_ev_ranking(ev_ranked)
     print_roic_ranking(roic_ranked)
     print_quality_ranking(quality_ranked)
+    print_fcf_ratio_ranking(fcf_ranked)
+    print_capex_ratio_ranking(capex_ranked)
     print_payout_ranking(pay_ranked)
 
     print(f"\n{'=' * 60}")
     print(f"Summary")
     print(f"{'=' * 60}")
-    print(f"  Fetched: {len(ev_results)} companies for EV/ROIC/Quality, "
+    print(f"  Fetched: {len(ev_results)} companies for EV/ROIC/Quality/FCF/Capex, "
           f"{len(pay_results)} for Payout")
     print(f"  EV/EBIT ranked: {len(ev_ranked)}")
     print(f"  ROIC ranked:    {len(roic_ranked)}")
     print(f"  Profit Quality ranked: {len(quality_ranked)}")
+    print(f"  FCF Ratio ranked: {len(fcf_ranked)}")
+    print(f"  Capex Ratio ranked: {len(capex_ranked)}")
     print(f"  EV+ROIC combined: {len(ev_combined)}")
     print(f"  Payout ranked:  {len(pay_ranked)}")
     print(f"\n  → {args.rankings}")
