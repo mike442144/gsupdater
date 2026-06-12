@@ -211,7 +211,7 @@ python run_rollout.py 互联网 食品  # specific industries
 
 ### `gs_rankings.py` — Fetch all ranking data from GS in one pass (recommended)
 
-Reads each company tab **once** and extracts **six dimensions**: EV/EBIT, ROIC, Profit Quality (扣非净利润 / 净利润), FCF Ratio (自由现金流 / 公司净利润), Capex Ratio (|资本开支| / 经营活动现金流), and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
+Reads each company tab **once** and extracts **six dimensions**: EV/EBIT, ROIC, Profit Quality (扣非净利润 / 净利润), FCF Ratio (自由现金流 / 公司净利润), Capex Ratio (Σ|资本开支| / Σ经营活动现金流, 近3年), and 5-year aggregate Payout Ratio (`Σ(DPS) / Σ(EPS)`). Outputs two CSVs that feed into `combined_ranking.py`.
 
 ```bash
 python gs_rankings.py                                       # all rollout industries
@@ -243,6 +243,6 @@ Each dimension is ranked independently:
 - ROIC: high → low (more efficient = better)
 - Profit Quality (扣非净利润/净利润): high → low (more stable earnings = better)
 - FCF Ratio (自由现金流/公司净利润): high → low (better cash conversion = better)
-- Capex Ratio (|资本开支|/经营活动现金流): low → high (lower capex intensity = better)
+- Capex Ratio (Σ|资本开支|/Σ经营活动现金流, 近3年): low → high (lower capex intensity = better)
 - Payout Ratio (5-yr aggregate): high → low (more generous = better)
 

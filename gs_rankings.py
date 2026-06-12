@@ -93,26 +93,30 @@ def read_cell(rows, row_idx, col_idx):
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 def read_summary(service, spreadsheet_id):
-    """Returns (codes, names, tev_ebitda_row, summary_rows)."""
+    """Returns (codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, summary_rows)."""
     result = _retry(lambda: service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range="'Summary'!A1:BZ100"
     ).execute())
     rows = result.get('values', [])
     if len(rows) < 3:
-        return [], [], None, rows
+        return [], [], None, None, None, rows
 
     codes, names = rows[0], rows[1]
     tev_ebitda_row = None
+    fcf_ratio_row = None
+    capex_ratio_row = None
     for i in range(2, len(rows)):
         for col_idx in range(min(3, len(rows[i]))):
-            val = str(rows[i][col_idx]).strip().lower() if rows[i][col_idx] else ''
-            if val in ('tev/ebitda', 'ev/ebitda', 'tev / ebitda'):
+            val = str(rows[i][col_idx]).strip() if rows[i][col_idx] else ''
+            val_lower = val.lower()
+            if val_lower in ('tev/ebitda', 'ev/ebitda', 'tev / ebitda'):
                 tev_ebitda_row = i
-                break
-        if tev_ebitda_row is not None:
-            break
-    return codes, names, tev_ebitda_row, rows
+            if val in ('自由现金流/公司净利润',):
+                fcf_ratio_row = i
+            if val in ('资本开支/经营净现金流',):
+                capex_ratio_row = i
+    return codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, rows
 
 
 def build_company_col_map(codes, names):
@@ -191,7 +195,7 @@ def pick_valuation_col(rows, data_cols):
 
 def process_spreadsheet(service, spreadsheet_id, industry,
                         ev_results, pay_results):
-    codes, names, tev_ebitda_row, summary_rows = read_summary(
+    codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, summary_rows = read_summary(
         service, spreadsheet_id)
     if not codes:
         print(f"  {industry}: no companies in Summary")
@@ -199,8 +203,14 @@ def process_spreadsheet(service, spreadsheet_id, industry,
 
     col_map = build_company_col_map(codes, names)
     tev_found = tev_ebitda_row is not None
+    fcf_found = fcf_ratio_row is not None
+    capex_found = capex_ratio_row is not None
     if not tev_found:
         print(f"  {industry}: WARNING — no TEV/EBITDA row in Summary")
+    if not fcf_found:
+        print(f"  {industry}: WARNING — no 自由现金流/公司净利润 row in Summary")
+    if not capex_found:
+        print(f"  {industry}: WARNING — no 资本开支/经营净现金流 row in Summary")
 
     meta = _retry(lambda: service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
@@ -211,7 +221,9 @@ def process_spreadsheet(service, spreadsheet_id, industry,
             and '资本结构' not in s['properties']['title']]
 
     print(f"  {industry}: {len(tabs)} tabs, "
-          f"TEV/EBITDA row: {tev_ebitda_row + 1 if tev_found else 'N/A'}")
+          f"TEV/EBITDA row: {tev_ebitda_row + 1 if tev_found else 'N/A'}, "
+          f"FCF row: {fcf_ratio_row + 1 if fcf_found else 'N/A'}, "
+          f"Capex row: {capex_ratio_row + 1 if capex_found else 'N/A'}")
 
     for tab in tabs:
         company = tab.replace('财务', '')
@@ -246,10 +258,21 @@ def process_spreadsheet(service, spreadsheet_id, industry,
 
                 summary_col = col_map.get(company)
                 tev_ebitda_val = None
-                if tev_found and summary_col is not None:
-                    row_data = summary_rows[tev_ebitda_row]
-                    if summary_col < len(row_data):
-                        tev_ebitda_val = safe_float(row_data[summary_col])
+                fcf_ratio = None
+                capex_ratio = None
+                if summary_col is not None:
+                    if tev_found:
+                        row_data = summary_rows[tev_ebitda_row]
+                        if summary_col < len(row_data):
+                            tev_ebitda_val = safe_float(row_data[summary_col])
+                    if fcf_found:
+                        row_data = summary_rows[fcf_ratio_row]
+                        if summary_col < len(row_data):
+                            fcf_ratio = safe_float(row_data[summary_col])
+                    if capex_found:
+                        row_data = summary_rows[capex_ratio_row]
+                        if summary_col < len(row_data):
+                            capex_ratio = safe_float(row_data[summary_col])
 
                 ev = None
                 ev_ebit = None
@@ -276,28 +299,6 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                         # Exclude extreme outliers: <0.5 or >1.5
                         if profit_quality < 0.5 or profit_quality > 1.5:
                             profit_quality = None
-
-                # ── FCF Ratio: latest annual FCFF / Net Income to Company ─
-                fcff_row = item_map.get('fcff')
-                nic_row = item_map.get('net income to company')
-                fcf_ratio = None
-                if fcff_row is not None and nic_row is not None and len(year_only_cols) >= 1:
-                    latest_yr_col = max(year_only_cols)
-                    fcff_val = safe_float(read_cell(rows, fcff_row, latest_yr_col))
-                    nic_val = safe_float(read_cell(rows, nic_row, latest_yr_col))
-                    if fcff_val is not None and nic_val and nic_val != 0:
-                        fcf_ratio = fcff_val / nic_val
-
-                # ── Capex Ratio: |Capital Expenditure| / Cash from Ops. ─
-                capex_row = item_map.get('capital expenditure')
-                ocf_row = item_map.get('cash from ops.')
-                capex_ratio = None
-                if capex_row is not None and ocf_row is not None and len(year_only_cols) >= 1:
-                    latest_yr_col = max(year_only_cols)
-                    capex_val = safe_float(read_cell(rows, capex_row, latest_yr_col))
-                    ocf_val = safe_float(read_cell(rows, ocf_row, latest_yr_col))
-                    if capex_val is not None and ocf_val and ocf_val != 0:
-                        capex_ratio = abs(capex_val) / ocf_val
 
                 ev_results.append({
                     'industry': industry, 'code': code, 'company': company,
@@ -605,7 +606,7 @@ def print_fcf_ratio_ranking(fcf_ranked):
 
 def print_capex_ratio_ranking(capex_ranked):
     print(f"\n{'=' * 90}")
-    print(f" Capex Ratio Ranking (资本开支/经营活动现金流, low → high)")
+    print(f" Capex Ratio Ranking (Σ资本开支/Σ经营活动现金流 近3年, low → high)")
     print(f"{'=' * 90}")
     print(f"{'#':>3}  {'Company':<16} {'Industry':<8} "
           f"{'Capex%':>7} {'ROIC':>9} {'EV/EBIT':>8}  Code")
