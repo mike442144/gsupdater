@@ -56,6 +56,24 @@ python update_kcfjcxsyjlr.py --dry-run           # preview only
 python update_kcfjcxsyjlr.py --sheet-id <ID>     # target a different spreadsheet
 ```
 
+### `add_segments_section.py` — Eastmoney → Google Sheets (主营构成 segments)
+
+Builds a dedicated **`<name>运营数据`** tab per A-share company holding 主营构成 (main-business composition) data, fetched from the eastmoney API via `mainop.js`. Layout is **metric → classification → item**:
+- Column A: metric (营业收入, 收入占比, 毛利率, 营业成本, 营业利润)
+- Column B: classification (按行业 / 按产品 / 按地区)
+- Column C: item (e.g. 茅台酒, 国内); annual values land on the item row
+- Column D: `Unit` header (mirrors the 财务 tab); year columns E onward mirror the company's 财务 tab
+
+Annual data only (`REPORT_DATE == YYYY-12-31`). The tab is created if missing and fully rebuilt on re-run (idempotent). Items with no data inside the mirrored year range (legacy labels) are dropped. A-share codes only — HK/US codes are skipped (`mainop.js` builds `.SZ/.SH` SECUCODEs). Amounts format as `#,##0`, ratios as `0.0%`; columns A–D are 80px wide with the header row and A–D frozen.
+
+> **Tip:** Year columns mirror the 财务 tab, so for a newly released year, update the 财务 tab first, then re-run this. Re-running wipes and rebuilds the whole tab, so don't keep manual edits here.
+
+```bash
+python add_segments_section.py --sheet-id <ID> --codes 600519              # one company
+python add_segments_section.py --sheet-id <ID> --codes 600519,000568,...   # several
+python add_segments_section.py --sheet-id <ID> --codes 600519 --dry-run    # preview only
+```
+
 ## How it works
 
 1. `industry_spreadsheets.json` defines industry → spreadsheet + stock codes mapping
@@ -70,7 +88,7 @@ python update_kcfjcxsyjlr.py --sheet-id <ID>     # target a different spreadshee
 | `google-api-python-client` | both |
 | `google-auth` / `google-oauth` | both |
 | `xlrd` | `update_financials.py` (read `.xls`) |
-| Node.js | `update_kcfjcxsyjlr.py` (calls eastmoney script) |
+| Node.js | `update_kcfjcxsyjlr.py`, `add_segments_section.py` (call eastmoney scripts) |
 
 ## Configuration
 
