@@ -69,10 +69,12 @@ Annual data only (`REPORT_DATE == YYYY-12-31`). The tab is created if missing an
 > **Tip:** Year columns mirror the 财务 tab, so for a newly released year, update the 财务 tab first, then re-run this. Re-running wipes and rebuilds the whole tab, so don't keep manual edits here.
 
 ```bash
-python add_segments_section.py --sheet-id <ID> --codes 600519              # one company
-python add_segments_section.py --sheet-id <ID> --codes 600519,000568,...   # several
+python add_segments_section.py --sheet-id <ID>                             # all A-shares from Summary
+python add_segments_section.py --sheet-id <ID> --codes 600519,000568       # specific codes
 python add_segments_section.py --sheet-id <ID> --codes 600519 --dry-run    # preview only
 ```
+
+`--codes` defaults to every A-share in the spreadsheet's `Summary` tab — the authoritative company list. Prefer the no-`--codes` form for rollouts; `industry_spreadsheets.json` can lag behind Summary and miss companies.
 
 ## How it works
 

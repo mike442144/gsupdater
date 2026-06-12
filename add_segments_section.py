@@ -118,8 +118,10 @@ def run_mainop(codes):
     # --count is the per-request page size; the default (200) truncates long
     # histories, so request enough to cover all periods back to ~2001.
     cmd = ['node', MAINOP_SCRIPT, '--codes', codes, '--count', '1000']
+    # mainop.js rate-limits ~10s/request (1 per code), so allow generous time
+    # for larger industries (e.g. 14+ A-shares).
     result = subprocess.run(cmd, cwd=EASTMONEY_DIR, capture_output=True,
-                            text=True, timeout=180)
+                            text=True, timeout=600)
     if result.returncode != 0:
         print(f"  ERROR: mainop.js failed: {result.stderr}")
         return []
@@ -414,12 +416,18 @@ def process_code(service, spreadsheet_id, code, fin_sheet_name, csv_rows, dry_ru
 def main():
     parser = argparse.ArgumentParser(description='Build 主营构成 运营数据 tab')
     parser.add_argument('--sheet-id', required=True)
-    parser.add_argument('--codes', required=True,
-                        help='Comma-separated A-share codes')
+    parser.add_argument('--codes',
+                        help='Comma-separated codes (default: all A-shares from Summary)')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
 
-    codes = [c.strip() for c in args.codes.split(',') if c.strip()]
+    service = get_service()
+    mapping = get_summary_mapping(service, args.sheet_id)
+
+    # Default to every A-share in the Summary tab — the authoritative company
+    # list — so the rollout can't silently miss codes absent from any config.
+    codes = ([c.strip() for c in args.codes.split(',') if c.strip()]
+             if args.codes else list(mapping.keys()))
     ashare = [c for c in codes if is_ashare(c)]
     skipped = [c for c in codes if not is_ashare(c)]
     if skipped:
@@ -427,9 +435,6 @@ def main():
     if not ashare:
         print("No A-share codes to process.")
         return
-
-    service = get_service()
-    mapping = get_summary_mapping(service, args.sheet_id)
 
     print(f"Fetching 主营构成 for: {', '.join(ashare)}")
     csv_rows = run_mainop(','.join(ashare))
