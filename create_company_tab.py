@@ -793,8 +793,12 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
 def scan_item_to_row(service, spreadsheet_id, sheet_name):
     """Scan columns B and C to build item_name (lowercase) → 0-indexed row mapping.
 
-    For each row, prefers column C (Key Stats items in new layout with sub-sections),
-    falls back to column B (IS/BS/CF items and old layout).
+    Priority rules so formula refs like {Net Income} resolve to the right row:
+    - Column B (IS/BS/CF statement lines) outranks column C (Key Stats labels), so a
+      Key Stats row never shadows the underlying statement line it pulls from.
+    - Among column-B duplicates the FIRST occurrence wins. An item present in both the
+      Income Statement and the Cash Flow (e.g. "Net Income") thus resolves to the
+      Income Statement row, not the later Cash Flow row.
     Skips sub-section headers like "盈利指标" and "同比增速".
     """
     result = service.spreadsheets().values().get(
@@ -803,18 +807,24 @@ def scan_item_to_row(service, spreadsheet_id, sheet_name):
     ).execute()
     rows = result.get('values', [])
     mapping = {}
+    source = {}  # lowercased name → 'B' or 'C', the column that set the current row
     for i, row in enumerate(rows):
         b_val = row[0].strip() if row and row[0] else ''
         c_val = row[1].strip() if len(row) > 1 and row[1] else ''
 
-        # Prefer C (Key Stats new layout), fall back to B (IS/BS/CF)
-        val = c_val if c_val else b_val
-
-        if not val:
-            continue
-        if val in KEY_STATS_SUB_SECTIONS:
-            continue
-        mapping[val.lower()] = i
+        # Consider B before C so a column-B line wins ties within a row.
+        for val, src in ((b_val, 'B'), (c_val, 'C')):
+            if not val:
+                continue
+            if val in KEY_STATS_SUB_SECTIONS:
+                continue
+            key = val.lower()
+            prev = source.get(key)
+            # Set when unseen, or upgrade a column-C entry to a column-B line.
+            # Keep the first column-B row (IS before CF); never downgrade B→C.
+            if prev is None or (prev == 'C' and src == 'B'):
+                mapping[key] = i
+                source[key] = src
     return mapping
 
 
