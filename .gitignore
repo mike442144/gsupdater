@@ -11,3 +11,6 @@ build/
 # Ranking output
 rankings.csv
 *.csv
+
+# Dedicated rankings spreadsheet id (per-machine, not shared)
+rankings_gs.json

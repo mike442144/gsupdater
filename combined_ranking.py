@@ -21,6 +21,7 @@ Usage:
 import csv
 import os
 import argparse
+import json
 from datetime import date
 
 
@@ -97,6 +98,101 @@ def _int(v):
         return None
 
 
+# Per-column rounding shared by the CSV and the Google-Sheet writer.
+_ROUND = {'ev_ebit': 1, 'roic': 4, 'profit_quality': 4,
+          'fcf_ratio': 4, 'capex_ratio': 4, 'payout': 4}
+
+
+def _round_row(c):
+    """Return a copy of a ranking row with float columns rounded for output."""
+    row = dict(c)
+    for col, digits in _ROUND.items():
+        if row.get(col) is not None:
+            row[col] = round(row[col], digits)
+    return row
+
+
+# ── Google Sheets write-back ──────────────────────────────────────────────
+
+RANKINGS_GS_CONFIG = 'rankings_gs.json'   # stores the dedicated spreadsheet id
+RANKINGS_GS_TITLE = 'Rankings'
+
+
+def _load_gs_id(here):
+    path = os.path.join(here, RANKINGS_GS_CONFIG)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f).get('spreadsheet_id')
+        except (json.JSONDecodeError, ValueError):
+            return None      # empty/corrupt config → treat as first run
+    return None
+
+
+def _save_gs_id(here, spreadsheet_id, url):
+    path = os.path.join(here, RANKINGS_GS_CONFIG)
+    with open(path, 'w') as f:
+        json.dump({'spreadsheet_id': spreadsheet_id, 'url': url}, f, indent=2)
+
+
+def write_rankings_to_gs(combined, fieldnames, tab_name, here):
+    """Upsert the master ranking into a dedicated spreadsheet, one tab per preset.
+
+    Creates the spreadsheet on first run (id persisted to rankings_gs.json),
+    reuses it afterwards. The target tab is created if missing, then fully
+    cleared and rewritten so re-runs never leave stale rows.
+    """
+    from gs_rankings import get_service          # reuse the write-scoped token
+    service = get_service()
+    sheets = service.spreadsheets()
+
+    spreadsheet_id = _load_gs_id(here)
+    if spreadsheet_id:
+        # Verify it still exists / is reachable; recreate if not.
+        try:
+            meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+        except Exception:
+            spreadsheet_id = None
+
+    if not spreadsheet_id:
+        created = sheets.create(body={
+            'properties': {'title': RANKINGS_GS_TITLE},
+            'sheets': [{'properties': {'title': tab_name}}],
+        }).execute()
+        spreadsheet_id = created['spreadsheetId']
+        url = created.get('spreadsheetUrl', f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}')
+        _save_gs_id(here, spreadsheet_id, url)
+        meta = created
+        print(f"Created dedicated rankings spreadsheet: {url}")
+
+    # Ensure the preset's tab exists.
+    existing = {s['properties']['title'] for s in meta.get('sheets', [])}
+    if tab_name not in existing:
+        sheets.batchUpdate(spreadsheetId=spreadsheet_id, body={
+            'requests': [{'addSheet': {'properties': {'title': tab_name}}}],
+        }).execute()
+
+    # Clear, then write header + rows (idempotent overwrite). The sheet name is
+    # quoted so preset names that look like A1 cell refs (e.g. fcf5 → FCF5) are
+    # parsed as a sheet, not a cell on the first tab.
+    quoted = f"'{tab_name}'"
+    sheets.values().clear(spreadsheetId=spreadsheet_id, range=quoted).execute()
+    values = [list(fieldnames)]
+    for c in combined:
+        row = _round_row(c)
+        values.append([row.get(col, '') if row.get(col) is not None else ''
+                       for col in fieldnames])
+    sheets.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"{quoted}!A1",
+        valueInputOption='RAW',
+        body={'values': values},
+    ).execute()
+
+    url = f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}'
+    print(f"Wrote {len(combined)} rows to '{tab_name}' tab: {url}")
+
+
 def main():
     here = os.path.dirname(__file__)
     today = date.today().isoformat()
@@ -110,6 +206,9 @@ def main():
                         help='Ranking preset')
     parser.add_argument('--output', '-o', default=f'master_ranking_{today}.csv',
                         help='Output CSV path')
+    parser.add_argument('--write-gs', action='store_true',
+                        help='Also write the master ranking to the dedicated '
+                             'rankings spreadsheet (one tab per preset)')
     args = parser.parse_args()
 
     preset = PRESETS[args.preset]
@@ -186,20 +285,11 @@ def main():
                                 extrasaction='ignore')
         writer.writeheader()
         for c in combined:
-            row = dict(c)
-            if row.get('ev_ebit') is not None:
-                row['ev_ebit'] = round(row['ev_ebit'], 1)
-            if row.get('roic') is not None:
-                row['roic'] = round(row['roic'], 4)
-            if row.get('profit_quality') is not None:
-                row['profit_quality'] = round(row['profit_quality'], 4)
-            if row.get('fcf_ratio') is not None:
-                row['fcf_ratio'] = round(row['fcf_ratio'], 4)
-            if row.get('capex_ratio') is not None:
-                row['capex_ratio'] = round(row['capex_ratio'], 4)
-            if row.get('payout') is not None:
-                row['payout'] = round(row['payout'], 4)
-            writer.writerow(row)
+            writer.writerow(_round_row(c))
+
+    # ── Write to Google Sheets (optional) ────────────────────────
+    if args.write_gs:
+        write_rankings_to_gs(combined, fieldnames, args.preset, here)
 
     # ── Print: Master combined ranking ───────────────────────────
     n_dims = len(dim_fields)
