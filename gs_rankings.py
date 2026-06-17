@@ -22,6 +22,7 @@ import json
 import csv
 import time
 import argparse
+from datetime import date
 
 sys.path.insert(0, os.path.expanduser('~/.hermes/hermes-agent'))
 
@@ -242,8 +243,10 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                 print(f"    {company}: skip — no data columns")
                 continue
 
-            code = next((c for c, n in zip(codes, names)
-                         if n.strip() == company), '')
+            ticker_cols = [(c, j) for j, (c, n) in enumerate(zip(codes, names))
+                          if n.strip() == company and c.strip()]
+            if not ticker_cols:
+                ticker_cols = [('', col_map.get(company))]
 
             # ── EV/EBIT + ROIC (LTM or latest annual) ─────────────
             val_col, period = pick_valuation_col(rows, all_data_cols)
@@ -256,61 +259,61 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                 ebit_val = safe_float(read_cell(rows, ebit_row, val_col)) if ebit_row is not None else None
                 roic_val = safe_float(read_cell(rows, roic_row, val_col)) if roic_row is not None else None
 
-                summary_col = col_map.get(company)
-                tev_ebitda_val = None
-                fcf_ratio = None
-                capex_ratio = None
-                if summary_col is not None:
-                    if tev_found:
-                        row_data = summary_rows[tev_ebitda_row]
-                        if summary_col < len(row_data):
-                            tev_ebitda_val = safe_float(row_data[summary_col])
-                    if fcf_found:
-                        row_data = summary_rows[fcf_ratio_row]
-                        if summary_col < len(row_data):
-                            fcf_ratio = safe_float(row_data[summary_col])
-                    if capex_found:
-                        row_data = summary_rows[capex_ratio_row]
-                        if summary_col < len(row_data):
-                            capex_ratio = safe_float(row_data[summary_col])
+                for code, summary_col in ticker_cols:
+                    tev_ebitda_val = None
+                    fcf_ratio = None
+                    capex_ratio = None
+                    if summary_col is not None:
+                        if tev_found:
+                            row_data = summary_rows[tev_ebitda_row]
+                            if summary_col < len(row_data):
+                                tev_ebitda_val = safe_float(row_data[summary_col])
+                        if fcf_found:
+                            row_data = summary_rows[fcf_ratio_row]
+                            if summary_col < len(row_data):
+                                fcf_ratio = safe_float(row_data[summary_col])
+                        if capex_found:
+                            row_data = summary_rows[capex_ratio_row]
+                            if summary_col < len(row_data):
+                                capex_ratio = safe_float(row_data[summary_col])
 
-                ev = None
-                ev_ebit = None
-                if tev_ebitda_val and ebitda_val:
-                    ev = tev_ebitda_val * ebitda_val
-                    if ebit_val and ebit_val != 0:
-                        ev_ebit = ev / ebit_val
+                    ev = None
+                    ev_ebit = None
+                    if tev_ebitda_val and ebitda_val:
+                        ev = tev_ebitda_val * ebitda_val
+                        if ebit_val and ebit_val != 0:
+                            ev_ebit = ev / ebit_val
 
-                roic_corrected = roic_val
-                if (roic_val is not None and roic_val < 0
-                        and ebit_val is not None and ebit_val > 0):
-                    roic_corrected = -roic_val
+                    roic_corrected = roic_val
+                    if (roic_val is not None and roic_val < 0
+                            and ebit_val is not None and ebit_val > 0):
+                        roic_corrected = -roic_val
 
-                # ── Profit Quality: latest annual 扣非/净利润 ─────────
-                net_income_row = item_map.get('net income')
-                kf_row = item_map.get('扣非净利润')
-                profit_quality = None
-                if net_income_row is not None and kf_row is not None and len(year_only_cols) >= 1:
-                    latest_yr_col = max(year_only_cols)
-                    net_income = safe_float(read_cell(rows, net_income_row, latest_yr_col))
-                    kf_net_income = safe_float(read_cell(rows, kf_row, latest_yr_col))
-                    if net_income and net_income != 0 and kf_net_income is not None:
-                        profit_quality = kf_net_income / net_income
-                        # Exclude extreme outliers: <0.5 or >1.5
-                        if profit_quality < 0.5 or profit_quality > 1.5:
-                            profit_quality = None
+                    # ── Profit Quality: latest annual 扣非/净利润 ─────────
+                    net_income_row = item_map.get('net income')
+                    kf_row = item_map.get('扣非净利润')
+                    profit_quality = None
+                    if net_income_row is not None and kf_row is not None and len(year_only_cols) >= 1:
+                        latest_yr_col = max(year_only_cols)
+                        net_income = safe_float(read_cell(rows, net_income_row, latest_yr_col))
+                        kf_net_income = safe_float(read_cell(rows, kf_row, latest_yr_col))
+                        if net_income and net_income != 0 and kf_net_income is not None:
+                            profit_quality = kf_net_income / net_income
+                            # Exclude extreme outliers: <0.5 or >1.5
+                            if profit_quality < 0.5 or profit_quality > 1.5:
+                                profit_quality = None
 
-                ev_results.append({
-                    'industry': industry, 'code': code, 'company': company,
-                    'period': period,
-                    'tev_ebitda': tev_ebitda_val, 'ev': ev,
-                    'ebitda': ebitda_val, 'ebit': ebit_val,
-                    'ev_ebit': ev_ebit,
-                    'roic': roic_val, 'roic_corrected': roic_corrected,
-                    'profit_quality': profit_quality,
-                    'fcf_ratio': fcf_ratio,
-                    'capex_ratio': capex_ratio,
-                })
+                    ev_results.append({
+                        'industry': industry, 'code': code, 'company': company,
+                        'period': period,
+                        'tev_ebitda': tev_ebitda_val, 'ev': ev,
+                        'ebitda': ebitda_val, 'ebit': ebit_val,
+                        'ev_ebit': ev_ebit,
+                        'roic': roic_val, 'roic_corrected': roic_corrected,
+                        'profit_quality': profit_quality,
+                        'fcf_ratio': fcf_ratio,
+                        'capex_ratio': capex_ratio,
+                    })
 
                 # status
                 parts = []
@@ -352,15 +355,17 @@ def process_spreadsheet(service, spreadsheet_id, industry,
                         else:
                             year_ratios.append(None)
 
-                    pay_results.append({
-                        'industry': industry, 'company': company,
-                        'years': ' → '.join(yr_labels),
-                        'total_dps': total_dps, 'total_eps': total_eps,
-                        'agg_payout': agg_payout,
-                        'yr1': year_ratios[0], 'yr2': year_ratios[1],
-                        'yr3': year_ratios[2], 'yr4': year_ratios[3],
-                        'yr5': year_ratios[4],
-                    })
+                    for pay_code, _ in ticker_cols:
+                        pay_results.append({
+                            'industry': industry, 'code': pay_code,
+                            'company': company,
+                            'years': ' → '.join(yr_labels),
+                            'total_dps': total_dps, 'total_eps': total_eps,
+                            'agg_payout': agg_payout,
+                            'yr1': year_ratios[0], 'yr2': year_ratios[1],
+                            'yr3': year_ratios[2], 'yr4': year_ratios[3],
+                            'yr5': year_ratios[4],
+                        })
                     pay_status = f'Payout={agg_payout:.1%}'
                 else:
                     pay_status = f'ΣEPS≤0'
@@ -407,32 +412,32 @@ def write_ev_csv(results, path):
 
     ev_rank = {}
     for i, r in enumerate(ev_ranked, 1):
-        ev_rank[(r['company'], r['industry'])] = i
+        ev_rank[(r['company'], r['industry'], r['code'])] = i
         r['ev_rank'] = i
 
     roic_rank = {}
     for i, r in enumerate(roic_ranked, 1):
-        roic_rank[(r['company'], r['industry'])] = i
+        roic_rank[(r['company'], r['industry'], r['code'])] = i
         r['roic_rank'] = i
 
     quality_rank = {}
     for i, r in enumerate(quality_ranked, 1):
-        quality_rank[(r['company'], r['industry'])] = i
+        quality_rank[(r['company'], r['industry'], r['code'])] = i
         r['quality_rank'] = i
 
     fcf_rank = {}
     for i, r in enumerate(fcf_ranked, 1):
-        fcf_rank[(r['company'], r['industry'])] = i
+        fcf_rank[(r['company'], r['industry'], r['code'])] = i
         r['fcf_rank'] = i
 
     capex_rank = {}
     for i, r in enumerate(capex_ranked, 1):
-        capex_rank[(r['company'], r['industry'])] = i
+        capex_rank[(r['company'], r['industry'], r['code'])] = i
         r['capex_rank'] = i
 
     combined = []
     for r in results:
-        key = (r['company'], r['industry'])
+        key = (r['company'], r['industry'], r['code'])
         if key in ev_rank and key in roic_rank:
             combined.append({
                 **r,
@@ -481,7 +486,7 @@ def write_payout_csv(results, path):
     for i, r in enumerate(ranked, 1):
         r['rank'] = i
 
-    fieldnames = ['rank', 'industry', 'company', 'agg_payout',
+    fieldnames = ['rank', 'industry', 'code', 'company', 'agg_payout',
                   'total_dps', 'total_eps', 'years',
                   'yr1', 'yr2', 'yr3', 'yr4', 'yr5']
 
@@ -633,9 +638,11 @@ def main():
         description='Fetch all ranking data from GS in one pass')
     parser.add_argument('industries', nargs='*',
                         help='Industries to include (default: all rollout)')
-    parser.add_argument('--rankings', default=os.path.join(here, 'rankings.csv'),
+    parser.add_argument('--rankings',
+                        default=os.path.join(here, f'rankings_{date.today().isoformat()}.csv'),
                         help='Output: EV/EBIT + ROIC + Profit Quality CSV')
-    parser.add_argument('--payout', default=os.path.join(here, 'payout_rankings.csv'),
+    parser.add_argument('--payout',
+                        default=os.path.join(here, f'payout_rankings_{date.today().isoformat()}.csv'),
                         help='Output: Payout Ratio CSV')
     args = parser.parse_args()
 

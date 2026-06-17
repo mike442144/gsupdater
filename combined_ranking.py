@@ -21,6 +21,7 @@ Usage:
 import csv
 import os
 import argparse
+from datetime import date
 
 
 PRESETS = {
@@ -44,11 +45,12 @@ PRESETS = {
 
 
 def load_rankings(path):
-    """Load rankings.csv → dict keyed by (company, industry)."""
+    """Load rankings.csv → dict keyed by (company, industry, code)."""
     data = {}
     with open(path, encoding='utf-8-sig') as f:
         for row in csv.DictReader(f):
-            key = (row['company'].strip(), row['industry'].strip())
+            key = (row['company'].strip(), row['industry'].strip(),
+                   row.get('code', '').strip())
             data[key] = {
                 'company': row['company'].strip(),
                 'industry': row['industry'].strip(),
@@ -68,11 +70,12 @@ def load_rankings(path):
 
 
 def load_payout(path):
-    """Load payout_rankings.csv → dict keyed by (company, industry)."""
+    """Load payout_rankings.csv → dict keyed by (company, industry, code)."""
     data = {}
     with open(path, encoding='utf-8-sig') as f:
         for row in csv.DictReader(f):
-            key = (row['company'].strip(), row['industry'].strip())
+            key = (row['company'].strip(), row['industry'].strip(),
+                   row.get('code', '').strip())
             data[key] = {
                 'payout': _float(row.get('agg_payout')),
                 'payout_rank': _int(row.get('rank')),
@@ -96,15 +99,16 @@ def _int(v):
 
 def main():
     here = os.path.dirname(__file__)
+    today = date.today().isoformat()
     parser = argparse.ArgumentParser(
         description='Combined EV/EBIT + ROIC + Profit Quality + FCF Ratio + Capex Ratio + Payout ranking')
-    parser.add_argument('--rankings', default=os.path.join(here, 'rankings.csv'),
+    parser.add_argument('--rankings', default=os.path.join(here, f'rankings_{today}.csv'),
                         help='Input: EV/EBIT + ROIC + Quality + FCF + Capex rankings CSV')
-    parser.add_argument('--payout', default=os.path.join(here, 'payout_rankings.csv'),
+    parser.add_argument('--payout', default=os.path.join(here, f'payout_rankings_{today}.csv'),
                         help='Input: Payout Ratio rankings CSV')
     parser.add_argument('--preset', default='full', choices=PRESETS.keys(),
                         help='Ranking preset')
-    parser.add_argument('--output', '-o', default='master_ranking.csv',
+    parser.add_argument('--output', '-o', default=f'master_ranking_{today}.csv',
                         help='Output CSV path')
     args = parser.parse_args()
 
@@ -123,7 +127,7 @@ def main():
         merged.append({
             'company': r.get('company') or key[0],
             'industry': r.get('industry') or key[1],
-            'code': r.get('code', ''),
+            'code': r.get('code') or p.get('code') or (key[2] if len(key) > 2 else ''),
             'ev_ebit': r.get('ev_ebit'),
             'ev_rank': r.get('ev_rank'),
             'roic': r.get('roic'),
