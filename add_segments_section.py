@@ -23,13 +23,19 @@ is written underneath in a 3-level hierarchy:
     按地区
                  国内 / 国外 ...
 
-Annual data only (REPORT_DATE == YYYY-12-31). The tab is rebuilt from scratch on
-every run (cleared then rewritten), so the script is idempotent. Items with no
-data inside the mirrored year columns (legacy pre-range labels) are dropped.
+Annual data only (REPORT_DATE == YYYY-12-31). Items with no data inside the
+mirrored year columns (legacy pre-range labels) are dropped.
+
+When the tab already exists, only NEW year columns are appended -- existing
+years are left untouched (no wipe). New values are matched onto the existing
+item rows by their metric/classification/item labels. Pass --rebuild to force a
+full regenerate-from-scratch (wipe + rewrite), e.g. if the item set has changed
+since the tab was first built.
 
 Usage:
     python add_segments_section.py --sheet-id <id> --codes 600519 --dry-run
-    python add_segments_section.py --sheet-id <id> --codes 600519
+    python add_segments_section.py --sheet-id <id> --codes 600519           # appends new years
+    python add_segments_section.py --sheet-id <id> --codes 600519 --rebuild
 """
 
 import sys
@@ -70,6 +76,9 @@ METRICS = [
     ('营业成本', 'MAIN_BUSINESS_COST', 'NUMBER', '#,##0'),
     ('营业利润', 'MAIN_BUSINESS_RPOFIT', 'NUMBER', '#,##0'),
 ]
+
+# metric label -> (number-format type, pattern), for incremental appends.
+METRIC_FMT = {label: (ftype, fpat) for label, _col, ftype, fpat in METRICS}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -382,7 +391,137 @@ def apply_tab(service, spreadsheet_id, tab_name, segments, years, dry_run):
     print(f"  ✓ Wrote '{tab_name}': {next_row - 1} rows, {len(writes)} cells")
 
 
-def process_code(service, spreadsheet_id, code, fin_sheet_name, csv_rows, dry_run):
+def read_tab_layout(service, spreadsheet_id, tab_name, row_count, col_count):
+    """Read an existing 运营数据 tab to recover its row layout.
+
+    Returns (existing_years, row_label):
+      existing_years -- ascending list of 4-digit year strings found in row 1.
+      row_label      -- {row_1idx: (metric, classification, item)} for item rows
+                        only. metric and classification are forward-filled from
+                        the last header row seen above each item (matching how
+                        plan_rows lays them out: metric once per block in col A,
+                        classification once per group in col B, item in col C).
+    """
+    end_col = col_to_letter(max(col_count, YEAR_START_COL + 1) - 1)
+    hdr = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{tab_name}'!A1:{end_col}1").execute().get('values', [[]])
+    header_row = hdr[0] if hdr else []
+    existing_years = sorted({str(v).strip() for v in header_row
+                             if re.match(r'^\d{4}$', str(v).strip())})
+
+    last_row = min(row_count, 5000)
+    lbl = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{tab_name}'!A2:C{last_row}").execute().get('values', [])
+    row_label = {}
+    cur_metric = cur_cls = None
+    for i, r in enumerate(lbl):
+        rr = i + 2  # data starts at row 2 (A2)
+        a = str(r[0]).strip() if len(r) > 0 and r[0] else ''
+        b = str(r[1]).strip() if len(r) > 1 and r[1] else ''
+        c = str(r[2]).strip() if len(r) > 2 and r[2] else ''
+        if a:
+            cur_metric = a
+            cur_cls = None      # classifications restart under each metric block
+        if b:
+            cur_cls = b
+        if c and cur_metric and cur_cls:
+            row_label[rr] = (cur_metric, cur_cls, c)
+    return existing_years, row_label
+
+
+def apply_tab_incremental(service, spreadsheet_id, tab_name, sheet_id,
+                          row_count, col_count, segments, years, dry_run):
+    """Append columns for years not yet on the tab; leave existing data intact.
+
+    New-year values are matched onto existing item rows via read_tab_layout's
+    (metric, classification, item) -> row map. Items that have no row on the tab
+    (e.g. newly appearing segments that were dropped when the tab was first
+    built) cannot be placed without inserting rows, so they are flagged and the
+    caller is told to use --rebuild.
+    """
+    existing_years, row_label = read_tab_layout(
+        service, spreadsheet_id, tab_name, row_count, col_count)
+
+    if not row_label:
+        print(f"  NOTE: '{tab_name}' exists but has no recognisable item rows; "
+              f"skipping incremental append (use --rebuild to regenerate it)")
+        return
+
+    existing = set(existing_years)
+    new_years = [y for y in years if y not in existing]
+    if not new_years:
+        through = existing_years[-1] if existing_years else '?'
+        print(f"  ✓ '{tab_name}' up to date (through {through}); nothing to append")
+        return
+
+    year_col = {y: YEAR_START_COL + i for i, y in enumerate(years)}
+    metric_labels = [m[0] for m in METRICS]
+
+    # Items present in the fresh data but with no matching row for some metric.
+    unmatched = []
+    for cls, block in segments.items():
+        for it in block['items']:
+            if any((m, cls, it) not in row_label.values() for m in metric_labels):
+                unmatched.append((cls, it))
+
+    # Build per-cell writes for the new year columns (header + matched values).
+    writes = []  # (row_1idx, col_0idx, value, fmt_type, fmt_pattern, bold)
+    for y in new_years:
+        writes.append((1, year_col[y], y, None, None, True))
+        for rr, (metric, cls, it) in row_label.items():
+            val = (segments.get(cls, {}).get('data', {})
+                   .get(it, {}).get(y, {}).get(metric))
+            if val is None:
+                continue
+            ftype, fpat = METRIC_FMT[metric]
+            if ftype == 'NUMBER':
+                val = round(val, 2)
+            writes.append((rr, year_col[y], val, ftype, fpat, False))
+
+    needed_cols = YEAR_START_COL + len(years)
+
+    if dry_run:
+        print(f"  Tab '{tab_name}' exists; would append {len(new_years)} new "
+              f"year(s): {', '.join(new_years)} ({len(writes)} cell writes)")
+        if unmatched:
+            print(f"  NOTE: {len(unmatched)} item(s) have no row on the tab and "
+                  f"would be skipped: "
+                  f"{', '.join(f'{c}/{it}' for c, it in sorted(unmatched))}")
+            print("        run with --rebuild to refresh the full layout instead")
+        for (rr, cc, val, _ft, _fp, _bold) in writes:
+            shown = f"{val:,.1f}" if isinstance(val, float) else val
+            print(f"    R{rr:<4} {col_to_letter(cc)}: {shown}")
+        return
+
+    requests = []
+    if needed_cols > col_count:
+        requests.append({'updateSheetProperties': {
+            'properties': {'sheetId': sheet_id, 'gridProperties': {
+                'columnCount': max(col_count, needed_cols)}},
+            'fields': 'gridProperties.columnCount'}})
+    for (rr, cc, val, ftype, fpat, bold) in writes:
+        requests.append({'updateCells': {
+            'range': {'sheetId': sheet_id,
+                      'startRowIndex': rr - 1, 'endRowIndex': rr,
+                      'startColumnIndex': cc, 'endColumnIndex': cc + 1},
+            'rows': [{'values': [cell(val, ftype, fpat, bold)]}],
+            'fields': 'userEnteredValue,userEnteredFormat'}})
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id, body={'requests': requests}).execute()
+    msg = (f"  ✓ Appended to '{tab_name}': year(s) {', '.join(new_years)}, "
+           f"{len(writes)} cells")
+    if unmatched:
+        msg += (f"\n  NOTE: {len(unmatched)} item(s) had no row on the tab and "
+                f"were skipped: "
+                f"{', '.join(f'{c}/{it}' for c, it in sorted(unmatched))}\n"
+                f"        run with --rebuild to refresh the full layout")
+    print(msg)
+
+
+def process_code(service, spreadsheet_id, code, fin_sheet_name, csv_rows,
+                 dry_run, rebuild=False):
     print(f"\n{'='*60}\n{code}\n{'='*60}")
     segments = build_segments(csv_rows, code)
     if not segments:
@@ -410,7 +549,14 @@ def process_code(service, spreadsheet_id, code, fin_sheet_name, csv_rows, dry_ru
                      if any(y in segments[cls]['data'][it] for y in years)]
             print(f"    {cls}: {len(shown)} items ({', '.join(shown)})")
 
-    apply_tab(service, spreadsheet_id, tab_name, segments, years, dry_run)
+    sheet_id, _rc, _cc = find_tab(service, spreadsheet_id, tab_name)
+    if sheet_id is not None and not rebuild:
+        apply_tab_incremental(service, spreadsheet_id, tab_name, sheet_id,
+                              _rc, _cc, segments, years, dry_run)
+    else:
+        if rebuild and sheet_id is not None:
+            print(f"  --rebuild: regenerating '{tab_name}' from scratch")
+        apply_tab(service, spreadsheet_id, tab_name, segments, years, dry_run)
 
 
 def main():
@@ -419,6 +565,9 @@ def main():
     parser.add_argument('--codes',
                         help='Comma-separated codes (default: all A-shares from Summary)')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--rebuild', action='store_true',
+                        help='Wipe and regenerate the tab from scratch instead '
+                             'of appending new years')
     args = parser.parse_args()
 
     service = get_service()
@@ -445,7 +594,7 @@ def main():
             print(f"\nSKIP {code}: not found in Summary")
             continue
         process_code(service, args.sheet_id, code, mapping[code], csv_rows,
-                     args.dry_run)
+                     args.dry_run, args.rebuild)
 
 
 if __name__ == '__main__':
