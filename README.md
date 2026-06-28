@@ -76,6 +76,27 @@ python add_segments_section.py --sheet-id <ID> --codes 600519 --dry-run    # pre
 
 `--codes` defaults to every A-share in the spreadsheet's `Summary` tab — the authoritative company list. Prefer the no-`--codes` form for rollouts; `industry_spreadsheets.json` can lag behind Summary and miss companies.
 
+### `add_hk_segments_section.py` — HK annual reports → Google Sheets (分部 segments)
+
+The HK counterpart of `add_segments_section.py` for A-shares. HK listings are skipped by the A-share tool (eastmoney `mainop.js` builds `.SZ/.SH` codes only), so this one sources 主营构成 / 分部 data from **annual-report PDFs** downloaded by [`~/Projects/tinyant/hkexnews/index.js`](../tinyant/hkexnews) into `data/<code>/` (e.g. `data/02233/2024_西部水泥_年度报告.pdf`).
+
+Parses the "收入及分部資料" segment note out of each PDF with **PyMuPDF** (rule-based — no LLM), handling two layouts the reports use:
+- a simple item + two-year revenue table (按產品/服務種類, or 地區市場 when the reporter has no operating segments), and
+- the 經營分部 multi-column table (external sales + 分部溢利), which can span pages with repeating page-header markers.
+
+Each annual report yields its fiscal year plus the prior comparative; reports are merged newest-first so a newer report's restated comparative wins. HK notes disclose **segment revenue and segment profit only** (no segment assets/liabilities), so the metrics are 营业收入 (external sales) and 分部业绩 (分部溢利). Values are converted from the report's 千元 into **百万元** to match the 财务 tab's millions (e.g. 02233's 2024 segment revenue 8,344,946 千元 → 8,344.9, tying to the 财务 tab's Total Revenue 8,345).
+
+Same `<name>运营数据` tab schema as the A-share tool (metric → classification → item; year columns mirror 财务); the layout engine (`plan_rows` / `apply_tab`) is shared via the A-share module with HK-specific metrics. Item names stay in the report's original (traditional) Chinese.
+
+```bash
+python add_hk_segments_section.py --sheet-id <ID> --codes 2233 --dry-run    # preview parsed data
+python add_hk_segments_section.py --sheet-id <ID> --codes 2233              # appends new years
+python add_hk_segments_section.py --sheet-id <ID> --codes 2233 --rebuild    # wipe + regenerate
+python add_hk_segments_section.py --parse path/to/2024_*.pdf                # debug: parse one PDF
+```
+
+`--codes` defaults to every HK code in `Summary`; pass `--no-fetch` to read only PDFs already on disk (otherwise missing years are fetched via hkexnews). Anchor keywords may need tuning per company — reports whose segment note uses a different heading/table shape (e.g. 02233's 2016–2018 reports, which have no segment-style note) yield no data for those years and are skipped.
+
 ## How it works
 
 1. `industry_spreadsheets.json` defines industry → spreadsheet + stock codes mapping
@@ -90,7 +111,8 @@ python add_segments_section.py --sheet-id <ID> --codes 600519 --dry-run    # pre
 | `google-api-python-client` | both |
 | `google-auth` / `google-oauth` | both |
 | `xlrd` | `update_financials.py` (read `.xls`) |
-| Node.js | `update_kcfjcxsyjlr.py`, `add_segments_section.py` (call eastmoney scripts) |
+| PyMuPDF (`fitz`) | `add_hk_segments_section.py` (parse annual-report PDFs) |
+| Node.js | `update_kcfjcxsyjlr.py`, `add_segments_section.py` (eastmoney scripts); `add_hk_segments_section.py` (hkexnews) |
 
 ## Configuration
 
@@ -100,6 +122,7 @@ Paths used by the scripts (via `os.path.expanduser('~')`):
 |---|---|
 | Google token | `~/.hermes/google_token.json` |
 | Eastmoney script | `~/projects/tinyant/eastmoney/index.js` |
+| HKEX annual-report downloader | `~/Projects/tinyant/hkexnews/index.js` (PDFs in `…/data/<code>/`) |
 
 Spreadsheet ID is auto-resolved from `industry_spreadsheets.json` by stock code.
 Override with `--spreadsheet-id` (financials), `--sheet-id` (扣非), or `--spreadsheets` (batch financials).

@@ -279,12 +279,22 @@ def cell(value, fmt_type=None, fmt_pattern=None, bold=False):
     return c
 
 
-def plan_rows(segments, years):
+def plan_rows(segments, years, metrics=METRICS, classification_order=CLASSIFICATION_ORDER,
+              skip_empty_metric_blocks=False):
     """Build planned cell writes for the whole tab.
 
     year_cols maps each year to its 0-indexed column (D onward). Returns
     (writes, next_free_row, year_cols). Each write:
     (row_1idx, col_0idx, value, fmt_type, fmt_pattern, bold).
+
+    metrics / classification_order default to this module's A-share constants
+    but can be overridden (e.g. by add_hk_segments_section) so the same layout
+    engine serves HK annual-report data.
+
+    skip_empty_metric_blocks: when True, omit a classification header + its
+    item rows under a metric if NO item carries that metric in the mirrored
+    year range (e.g. HK 分部业绩 applies only to 按地区, not 按产品). Off by
+    default to keep A-share output bit-for-bit identical.
     """
     year_cols = {y: YEAR_START_COL + i for i, y in enumerate(years)}
     writes = [(1, 0, TAB_TITLE, None, None, True),
@@ -294,10 +304,10 @@ def plan_rows(segments, years):
 
     # Top level: metric. Then classification, then item (item row carries values).
     r = 2
-    for label, _col, ftype, fpat in METRICS:
+    for label, _col, ftype, fpat in metrics:
         writes.append((r, 0, label, None, None, True))   # metric -> col A
         r += 1
-        for cls in CLASSIFICATION_ORDER:
+        for cls in classification_order:
             if cls not in segments:
                 continue
             block = segments[cls]
@@ -305,6 +315,10 @@ def plan_rows(segments, years):
             items = [it for it in block['items']
                      if any(y in block['data'][it] for y in year_cols)]
             if not items:
+                continue
+            if skip_empty_metric_blocks and not any(
+                    label in block['data'][it].get(y, {})
+                    for it in items for y in year_cols):
                 continue
             writes.append((r, 1, cls, None, None, True))   # classification -> col B
             r += 1
@@ -321,8 +335,11 @@ def plan_rows(segments, years):
     return writes, r, year_cols
 
 
-def apply_tab(service, spreadsheet_id, tab_name, segments, years, dry_run):
-    writes, next_row, year_cols = plan_rows(segments, years)
+def apply_tab(service, spreadsheet_id, tab_name, segments, years, dry_run,
+              metrics=METRICS, classification_order=CLASSIFICATION_ORDER,
+              skip_empty_metric_blocks=False):
+    writes, next_row, year_cols = plan_rows(
+        segments, years, metrics, classification_order, skip_empty_metric_blocks)
     needed_cols = YEAR_START_COL + len(years)
 
     if dry_run:
@@ -432,7 +449,8 @@ def read_tab_layout(service, spreadsheet_id, tab_name, row_count, col_count):
 
 
 def apply_tab_incremental(service, spreadsheet_id, tab_name, sheet_id,
-                          row_count, col_count, segments, years, dry_run):
+                          row_count, col_count, segments, years, dry_run,
+                          metric_fmt=METRIC_FMT):
     """Append columns for years not yet on the tab; leave existing data intact.
 
     New-year values are matched onto existing item rows via read_tab_layout's
@@ -457,7 +475,7 @@ def apply_tab_incremental(service, spreadsheet_id, tab_name, sheet_id,
         return
 
     year_col = {y: YEAR_START_COL + i for i, y in enumerate(years)}
-    metric_labels = [m[0] for m in METRICS]
+    metric_labels = list(metric_fmt.keys())
 
     # Items present in the fresh data but with no matching row for some metric.
     unmatched = []
@@ -475,7 +493,7 @@ def apply_tab_incremental(service, spreadsheet_id, tab_name, sheet_id,
                    .get(it, {}).get(y, {}).get(metric))
             if val is None:
                 continue
-            ftype, fpat = METRIC_FMT[metric]
+            ftype, fpat = metric_fmt[metric]
             if ftype == 'NUMBER':
                 val = round(val, 2)
             writes.append((rr, year_col[y], val, ftype, fpat, False))
