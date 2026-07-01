@@ -2,14 +2,14 @@
 """
 Fetch all ranking data from Google Sheets in ONE pass, output two CSVs:
   - rankings.csv         (EV/EBIT + ROIC ranking)
-  - payout_rankings.csv  (WINDOW_YEARS-year aggregate Payout Ratio ranking)
+  - payout_rankings.csv  (WINDOW_YEARS-year Payout Ratio from the Summary page)
 
-Each company tab is read exactly once; EBITDA/EBIT/ROIC and DPS/EPS are
-extracted from the same response.
+Each company tab is read exactly once; EBITDA/EBIT/ROIC are extracted from
+the same response. Payout (平均派息率), FCF Ratio and Capex Ratio are read
+directly from the Summary page's WINDOW_YEARS section.
 
-Aggregate dimensions (Profit Quality, Payout, plus FCF/Capex read from the
-Summary page) all use a common WINDOW_YEARS lookback; EV/EBIT and ROIC stay
-LTM point-in-time snapshots.
+Aggregate dimensions (Profit Quality, Payout, FCF/Capex) all use a common
+WINDOW_YEARS lookback; EV/EBIT and ROIC stay LTM point-in-time snapshots.
 
 Usage:
     python gs_rankings.py                       # all rollout industries
@@ -104,20 +104,22 @@ def read_cell(rows, row_idx, col_idx):
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 def read_summary(service, spreadsheet_id):
-    """Returns (codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, summary_rows)."""
+    """Returns (codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row,
+    payout_row, summary_rows)."""
     result = _retry(lambda: service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range="'Summary'!A1:BZ100"
     ).execute())
     rows = result.get('values', [])
     if len(rows) < 3:
-        return [], [], None, None, None, rows
+        return [], [], None, None, None, None, rows
 
     codes, names = rows[0], rows[1]
     tev_ebitda_row = None
     fcf_ratio_row = None
     capex_ratio_row = None
-    # FCF/Capex appear once per lookback section (10/5/3-year), each preceded by
+    payout_row = None
+    # Payout (平均派息率) / FCF / Capex each appear once per lookback section
     # a column-A header like '2023-2025年（3年）'. Track the active section so we
     # bind to the WINDOW_YEARS variant explicitly instead of relying on row order.
     section_window = None
@@ -131,11 +133,13 @@ def read_summary(service, spreadsheet_id):
             val_lower = val.lower()
             if val_lower in ('tev/ebitda', 'ev/ebitda', 'tev / ebitda'):
                 tev_ebitda_row = i
+            if val == '平均派息率' and section_window == WINDOW_YEARS:
+                payout_row = i
             if val == '自由现金流/公司净利润' and section_window == WINDOW_YEARS:
                 fcf_ratio_row = i
             if val == '资本开支/经营净现金流' and section_window == WINDOW_YEARS:
                 capex_ratio_row = i
-    return codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, rows
+    return codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, payout_row, rows
 
 
 def build_company_col_map(codes, names):
@@ -214,7 +218,7 @@ def pick_valuation_col(rows, data_cols):
 
 def process_spreadsheet(service, spreadsheet_id, industry,
                         ev_results, pay_results):
-    codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, summary_rows = read_summary(
+    codes, names, tev_ebitda_row, fcf_ratio_row, capex_ratio_row, payout_row, summary_rows = read_summary(
         service, spreadsheet_id)
     if not codes:
         print(f"  {industry}: no companies in Summary")
@@ -224,12 +228,15 @@ def process_spreadsheet(service, spreadsheet_id, industry,
     tev_found = tev_ebitda_row is not None
     fcf_found = fcf_ratio_row is not None
     capex_found = capex_ratio_row is not None
+    payout_found = payout_row is not None
     if not tev_found:
         print(f"  {industry}: WARNING — no TEV/EBITDA row in Summary")
     if not fcf_found:
         print(f"  {industry}: WARNING — no 自由现金流/公司净利润 row in Summary")
     if not capex_found:
         print(f"  {industry}: WARNING — no 资本开支/经营净现金流 row in Summary")
+    if not payout_found:
+        print(f"  {industry}: WARNING — no 平均派息率 row in Summary")
 
     meta = _retry(lambda: service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
@@ -242,7 +249,8 @@ def process_spreadsheet(service, spreadsheet_id, industry,
     print(f"  {industry}: {len(tabs)} tabs, "
           f"TEV/EBITDA row: {tev_ebitda_row + 1 if tev_found else 'N/A'}, "
           f"FCF row: {fcf_ratio_row + 1 if fcf_found else 'N/A'}, "
-          f"Capex row: {capex_ratio_row + 1 if capex_found else 'N/A'}")
+          f"Capex row: {capex_ratio_row + 1 if capex_found else 'N/A'}, "
+          f"Payout row: {payout_row + 1 if payout_found else 'N/A'}")
 
     for tab in tabs:
         company = tab.replace('财务', '')
@@ -348,57 +356,24 @@ def process_spreadsheet(service, spreadsheet_id, industry,
             else:
                 ev_status = 'no usable period'
 
-            # ── Payout Ratio (latest WINDOW_YEARS annual years) ────
-            dps_row = item_map.get('dividends per share')
-            eps_row = item_map.get('basic eps')
-
-            if dps_row is not None and eps_row is not None and len(year_only_cols) >= WINDOW_YEARS:
-                latest = sorted(year_only_cols, reverse=True)[:WINDOW_YEARS]
-                latest = sorted(latest)
-
-                dps_vals, eps_vals, yr_labels = [], [], []
-                for dc in latest:
-                    d = safe_float(read_cell(rows, dps_row, dc))
-                    e = safe_float(read_cell(rows, eps_row, dc))
-                    dps_vals.append(d if d is not None else 0.0)
-                    eps_vals.append(e if e is not None else 0.0)
-                    yr_labels.append(header_labels.get(dc, str(dc)))
-
-                total_eps = sum(eps_vals)
-                total_dps = sum(dps_vals)
-
-                if total_eps > 0:
-                    agg_payout = total_dps / total_eps
-                    year_ratios = []
-                    for d, e in zip(dps_vals, eps_vals):
-                        if e and e > 0:
-                            year_ratios.append(min(d / e, 10.0))
-                        else:
-                            year_ratios.append(None)
-
-                    for pay_code, _ in ticker_cols:
-                        rec = {
+            # ── Payout Ratio (3-year 平均派息率, read from Summary) ────
+            agg_payout = None
+            if payout_found:
+                for pay_code, pcol in ticker_cols:
+                    val = None
+                    if pcol is not None:
+                        row_data = summary_rows[payout_row]
+                        if pcol < len(row_data):
+                            val = safe_float(row_data[pcol])
+                    if val is not None:
+                        agg_payout = val
+                        pay_results.append({
                             'industry': industry, 'code': pay_code,
-                            'company': company,
-                            'years': ' → '.join(yr_labels),
-                            'total_dps': total_dps, 'total_eps': total_eps,
-                            'agg_payout': agg_payout,
-                        }
-                        for k, yr in enumerate(year_ratios, 1):
-                            rec[f'yr{k}'] = yr
-                        pay_results.append(rec)
-                    pay_status = f'Payout={agg_payout:.1%}'
-                else:
-                    pay_status = f'ΣEPS≤0'
+                            'company': company, 'agg_payout': val,
+                        })
+                pay_status = f'Payout={agg_payout:.1%}' if agg_payout is not None else 'no payout cell'
             else:
-                missing = []
-                if dps_row is None:
-                    missing.append('no DPS')
-                if eps_row is None:
-                    missing.append('no EPS')
-                if len(year_only_cols) < WINDOW_YEARS:
-                    missing.append(f'only {len(year_only_cols)}yr')
-                pay_status = ', '.join(missing)
+                pay_status = 'no 平均派息率 row'
 
             print(f"    {company} [{period}]: {ev_status} | {pay_status}")
 
@@ -507,9 +482,7 @@ def write_payout_csv(results, path):
     for i, r in enumerate(ranked, 1):
         r['rank'] = i
 
-    yr_cols = [f'yr{k}' for k in range(1, WINDOW_YEARS + 1)]
-    fieldnames = ['rank', 'industry', 'code', 'company', 'agg_payout',
-                  'total_dps', 'total_eps', 'years'] + yr_cols
+    fieldnames = ['rank', 'industry', 'code', 'company', 'agg_payout']
 
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames,
@@ -517,12 +490,8 @@ def write_payout_csv(results, path):
         writer.writeheader()
         for r in ranked:
             row = dict(r)
-            for k in ['agg_payout'] + yr_cols:
-                if row.get(k) is not None:
-                    row[k] = round(row[k], 4)
-            for k in ('total_dps', 'total_eps'):
-                if row.get(k) is not None:
-                    row[k] = round(row[k], 2)
+            if row.get('agg_payout') is not None:
+                row['agg_payout'] = round(row['agg_payout'], 4)
             writer.writerow(row)
 
     return ranked
@@ -569,25 +538,18 @@ def print_roic_ranking(roic_ranked):
 
 
 def print_payout_ranking(ranked):
-    yr_cols = [f'yr{k}' for k in range(1, WINDOW_YEARS + 1)]
-    print(f"\n{'=' * 110}")
-    print(f" {WINDOW_YEARS}-Year Aggregate Payout Ratio (ΣDPS/ΣEPS, high → low)")
-    print(f"{'=' * 110}")
-    yr_hdr = ' '.join(f"{f'Y{k}':>8}" for k in range(1, WINDOW_YEARS + 1))
-    print(f"{'#':>3}  {'Company':<20} {'Industry':<10} "
-          f"{'Agg%':>8} {'ΣDPS':>8} {'ΣEPS':>8}  "
-          f"{yr_hdr}  Years")
-    print(f"{'-' * 110}")
+    print(f"\n{'=' * 70}")
+    print(f" {WINDOW_YEARS}-Year Payout Ratio (Summary 平均派息率, high → low)")
+    print(f"{'=' * 70}")
+    print(f"{'#':>3}  {'Company':<20} {'Industry':<10} {'Payout%':>9}  Code")
+    print(f"{'-' * 70}")
     for r in ranked:
         def p(v):
             if v is None:
                 return '-'
             return f"{v:.0%}" if v >= 1.0 else f"{v:.1%}"
-        yr_str = ' '.join(f"{p(r.get(c)):>8}" for c in yr_cols)
         print(f"{r['rank']:>3}  {r['company']:<20} {r['industry']:<10} "
-              f"{p(r['agg_payout']):>8} "
-              f"{r['total_dps']:>8.2f} {r['total_eps']:>8.2f}  "
-              f"{yr_str}  {r['years']}")
+              f"{p(r['agg_payout']):>9}  {r.get('code', '')}")
 
 
 def print_quality_ranking(quality_ranked):
