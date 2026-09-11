@@ -26,10 +26,15 @@ Reads Capital IQ Excel files (`.xls`/`.xlsx`) and writes Income Statement, Balan
 
 Also writes Payout Ratio formulas (`DPS / Basic EPS`), copies Key Stats formulas to new columns automatically, and syncs Capital Structure Details from Excel to the Google Sheets 资本结构 tab.
 
+**Quarterly files** (`*Financials Quarterly.xls`, `*Income Statement Quarterly.xls` — detected by `Quarterly` in the filename) take a separate path: quarterly Income Statement columns are written into the tab's quarterly columns (`Q1 2021`, `Q2 2021`, …) by quarter key. Quarters newer than the last quarterly column are appended (grid expanded if needed); the CIQ quirk where fiscal Q4 is stamped `Jan-01-YYYY` is rolled back one year, and duplicate quarters (Restated / Reclassified / Press Release variants) resolve to the rightmost Excel column. Income Statement only — quarterly BS/CF sheets are ignored.
+
+All API requests are paced (~54/min) with 429/5xx retry — Google's per-user Sheets quota is 60 read + 60 write requests per minute, which plain batch runs exceed.
+
 **Single file:**
 ```bash
 python update_financials.py path/to/CIQ_file.xls "公司财务"
 python update_financials.py path/to/CIQ_file.xls "公司财务" --spreadsheet-id <ID>  # target specific spreadsheet
+python update_financials.py path/to/CIQ_file_quarterly.xls "公司财务"             # quarterly IS auto-detected
 ```
 
 **Batch mode** (routes files by stock code using `industry_spreadsheets.json`):

@@ -14,9 +14,41 @@ import argparse
 sys.path.insert(0, os.path.expanduser('~/.hermes/hermes-agent'))
 
 import xlrd
+import time
 from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import HttpRequest
+
+
+# ── API pacing ─────────────────────────────────────────────────────────────
+# Google Sheets per-user quota is 60 read + 60 write requests per minute;
+# batch runs exceed that, so pace every request and retry on 429/5xx.
+
+_orig_execute = HttpRequest.execute
+_MIN_CALL_INTERVAL = 1.1  # seconds → ~54 req/min, under both quotas
+_last_call_ts = [0.0]
+
+def _paced_execute(self, *args, **kwargs):
+    for attempt in range(5):
+        wait = _MIN_CALL_INTERVAL - (time.monotonic() - _last_call_ts[0])
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            resp = _orig_execute(self, *args, **kwargs)
+            _last_call_ts[0] = time.monotonic()
+            return resp
+        except HttpError as e:
+            _last_call_ts[0] = time.monotonic()  # failed calls still burn quota
+            if e.resp.status in (429, 500, 503) and attempt < 4:
+                pause = 20 * (attempt + 1)
+                print(f"  ... HTTP {e.resp.status}, retrying in {pause}s")
+                time.sleep(pause)
+                continue
+            raise
+
+HttpRequest.execute = _paced_execute
 
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -62,6 +94,39 @@ def serial_to_year(serial):
     return None
 
 
+def parse_quarter_header(header_str):
+    """Parse a CIQ quarterly column header into a quarter key like 'Q1 2026'.
+
+    Handles prefixes (Restated / Reclassified / Press Release) and the CIQ
+    quirk where fiscal Q4 is stamped Jan-01-YYYY — roll back one year, the
+    same rule serial_to_year applies to annual columns.
+    """
+    s = str(header_str).strip().replace('\n', ' ').replace('\r', '')
+    qm = re.search(r'\bQ([1-4])\b', s)
+    dm = re.search(r'([A-Z][a-z]{2})-(\d{2})-(\d{4})', s)
+    if not (qm and dm):
+        return None
+    yr = int(dm.group(3))
+    if dm.group(1) == 'Jan' and dm.group(2) == '01':
+        yr -= 1
+    return f'Q{qm.group(1)} {yr}'
+
+
+def quarter_sort_key(qkey):
+    """'Q2 2026' -> (2026, 2) for chronological ordering."""
+    q, y = qkey.split()
+    return (int(y), int(q[1:]))
+
+
+def clean_ltm_label(s):
+    """Strip CIQ noise prefixes from an LTM header label.
+
+    'LTM Press Release 12 months Jun-30-2026' -> 'LTM 12 months Jun-30-2026'
+    """
+    cleaned = re.sub(r'\b(Press Release|Restated|Reclassified)\b', '', s)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
+
 def extract_header_info(header_str):
     """Extract (year, is_ltm, label) from Excel header.
 
@@ -71,6 +136,11 @@ def extract_header_info(header_str):
     s = str(header_str).strip().replace('\n', ' ').replace('\r', '')
     if not s:
         return None, False, ''
+
+    # Quarterly column (e.g. "3 months Q1 Mar-31-2026") belongs to the
+    # quarterly flow — annual planning must never treat it as a year column.
+    if re.search(r'\bQ[1-4]\b', s):
+        return None, False, s
 
     # Excel serial date (Balance Sheet)
     year = serial_to_year(s)
@@ -89,7 +159,7 @@ def extract_header_info(header_str):
             yr -= 1
         year = str(yr)
         if is_ltm:
-            return year, True, s
+            return year, True, clean_ltm_label(s)
         return year, False, year
 
     # Fallback: any 4-digit year (e.g., "Q1 2024")
@@ -97,7 +167,7 @@ def extract_header_info(header_str):
     if match:
         year = match.group(1)
         if is_ltm:
-            return year, True, s
+            return year, True, clean_ltm_label(s)
         return year, False, s
 
     return None, is_ltm, s
@@ -127,7 +197,7 @@ def get_sheet_grid_size(service, spreadsheet_id, sheet_name):
 
 # ── Read Excel ─────────────────────────────────────────────────────────────
 
-def read_excel_sheet(wb, sheet_name):
+def read_excel_sheet(wb, sheet_name, quarterly=False):
     try:
         sheet = wb.sheet_by_name(sheet_name)
     except xlrd.XLRDError:
@@ -148,12 +218,18 @@ def read_excel_sheet(wb, sheet_name):
     header_row_idx = title_row_idx + 1
     header_values = [sheet.cell_value(header_row_idx, j) for j in range(sheet.ncols)]
 
-    # Parse data columns
-    col_info = []  # list of (excel_col_idx, year, is_ltm, display_label)
+    # Parse data columns. In quarterly mode the year slot of each tuple holds
+    # a quarter key like 'Q1 2026' instead of a bare year.
+    col_info = []  # list of (excel_col_idx, year_or_qkey, is_ltm, display_label)
     for j in range(1, sheet.ncols):
-        year, is_ltm, label = extract_header_info(header_values[j])
-        if year:
-            col_info.append((j, year, is_ltm, label))
+        if quarterly:
+            qkey = parse_quarter_header(header_values[j])
+            if qkey:
+                col_info.append((j, qkey, False, qkey))
+        else:
+            year, is_ltm, label = extract_header_info(header_values[j])
+            if year:
+                col_info.append((j, year, is_ltm, label))
 
     if not col_info:
         return None, None
@@ -357,6 +433,31 @@ def is_eps_item(norm_name):
 
 # ── Main Logic ─────────────────────────────────────────────────────────────
 
+def resolve_gs_sheet(service, spreadsheet_id, gs_sheet_name):
+    """Resolve a tab name (exact match, then without '财务' suffix).
+
+    Returns (actual_sheet_name, numeric_sheet_id, row_count, col_count).
+    """
+    spreadsheet_meta = service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        fields='sheets(properties(title,sheetId,gridProperties(rowCount,columnCount)))'
+    ).execute()
+    actual_titles = {s['properties']['title']: s['properties'] for s in spreadsheet_meta.get('sheets', [])}
+
+    if gs_sheet_name not in actual_titles:
+        # Try without "财务" suffix
+        alt_name = gs_sheet_name.replace('财务', '')
+        if alt_name in actual_titles:
+            print(f"  Note: Sheet '{gs_sheet_name}' not found, using '{alt_name}'")
+            gs_sheet_name = alt_name
+        else:
+            raise ValueError(f"Sheet '{gs_sheet_name}' (or '{alt_name}') not found in spreadsheet")
+
+    props = actual_titles[gs_sheet_name]
+    gp = props.get('gridProperties', {})
+    return gs_sheet_name, props['sheetId'], gp.get('rowCount', 1000), gp.get('columnCount', 26)
+
+
 def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=False):
     if spreadsheet_id is None:
         raise ValueError("spreadsheet_id is required. Pass --spreadsheet-id or use --batch mode.")
@@ -370,28 +471,9 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
     wb = xlrd.open_workbook(excel_path)
     creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_PATH)
     service = build('sheets', 'v4', credentials=creds)
-    
-    # Resolve sheet name: try exact match, then without "财务" suffix
-    spreadsheet_meta = service.spreadsheets().get(
-        spreadsheetId=spreadsheet_id,
-        fields='sheets(properties(title,sheetId,gridProperties(rowCount,columnCount)))'
-    ).execute()
-    actual_titles = {s['properties']['title']: s['properties'] for s in spreadsheet_meta.get('sheets', [])}
-    
-    if gs_sheet_name not in actual_titles:
-        # Try without "财务" suffix
-        alt_name = gs_sheet_name.replace('财务', '')
-        if alt_name in actual_titles:
-            print(f"  Note: Sheet '{gs_sheet_name}' not found, using '{alt_name}'")
-            gs_sheet_name = alt_name
-        else:
-            raise ValueError(f"Sheet '{gs_sheet_name}' (or '{alt_name}') not found in spreadsheet")
-    
-    props = actual_titles[gs_sheet_name]
-    target_sheet_id = props['sheetId']
-    gp = props.get('gridProperties', {})
-    row_count = gp.get('rowCount', 1000)
-    col_count = gp.get('columnCount', 26)
+
+    gs_sheet_name, target_sheet_id, row_count, col_count = resolve_gs_sheet(
+        service, spreadsheet_id, gs_sheet_name)
     
     # Read GS header (dynamic range based on actual grid width)
     end_col_letter = col_to_letter(col_count - 1)
@@ -690,6 +772,197 @@ def process_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=
         update_capital_structure_details(wb, service, spreadsheet_id, gs_sheet_name)
 
 
+# ── Quarterly Income Statement ─────────────────────────────────────────────
+
+def process_quarterly_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None, dry_run=False):
+    """Write quarterly Income Statement data from a CIQ 'Quarterly' Excel file
+    into the quarterly columns (Q1 2021, Q2 2021, ...) of the company tab.
+
+    - Excel columns are matched to GS quarterly columns by quarter key.
+    - Quarters newer than the last GS quarterly column are appended (the grid
+      is expanded if needed); quarters falling inside/before the existing
+      range without a column are skipped (no column insertion).
+    - Duplicate quarters (Restated / Reclassified / Press Release variants)
+      resolve to the rightmost Excel column — the latest restatement.
+    - Income Statement only, per the quarterly export's purpose.
+    """
+    print(f"\n{'='*60}")
+    print(f"Processing (quarterly IS): {excel_path}")
+    print(f"Spreadsheet: {spreadsheet_id[:30]}...")
+    print(f"Target Google Sheet: '{gs_sheet_name}'")
+    print(f"{'='*60}")
+
+    wb = xlrd.open_workbook(excel_path)
+    creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_PATH)
+    service = build('sheets', 'v4', credentials=creds)
+
+    gs_sheet_name, target_sheet_id, _row_count, col_count = resolve_gs_sheet(
+        service, spreadsheet_id, gs_sheet_name)
+
+    excel_items, excel_col_info = read_excel_sheet(wb, 'Income Statement', quarterly=True)
+    if excel_items is None:
+        print("  SKIP: no quarterly Income Statement sheet found")
+        return
+    col_pos = {excel_col_idx: i for i, (excel_col_idx, _, _, _) in enumerate(excel_col_info)}
+
+    # Dedupe by quarter key — rightmost column wins (latest restatement)
+    qkey_to_excel_col = {}
+    for excel_col_idx, qkey, _, _ in excel_col_info:
+        qkey_to_excel_col[qkey] = excel_col_idx
+
+    # Read GS header row and locate existing quarterly columns
+    end_col_letter = col_to_letter(col_count - 1)
+    header_result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{gs_sheet_name}'!A1:{end_col_letter}1"
+    ).execute()
+    gs_header = header_result.get('values', [[]])[0]
+    while len(gs_header) < col_count:
+        gs_header.append('')
+
+    gs_qcols = {}
+    for j, val in enumerate(gs_header):
+        m = re.match(r'^(Q[1-4]) (\d{4})$', str(val).strip())
+        if m:
+            gs_qcols[f'{m.group(1)} {m.group(2)}'] = j
+
+    # Map quarters → GS columns; collect the ones needing a new column
+    qkey_to_gs_col = {}
+    new_qkeys = []
+    for qkey in sorted(qkey_to_excel_col, key=quarter_sort_key):
+        if qkey in gs_qcols:
+            qkey_to_gs_col[qkey] = gs_qcols[qkey]
+        else:
+            new_qkeys.append(qkey)
+
+    if gs_qcols:
+        last_qkey = max(gs_qcols, key=quarter_sort_key)
+        appendable = [q for q in new_qkeys if quarter_sort_key(q) > quarter_sort_key(last_qkey)]
+        skipped = [q for q in new_qkeys if q not in appendable]
+        if skipped:
+            print(f"  WARNING: no GS column for {skipped} inside the existing quarterly range; skipped")
+    else:
+        # No quarterly columns yet — start the standard area at col 26 (AA)
+        appendable = new_qkeys
+
+    next_col = (max(gs_qcols.values()) if gs_qcols else 25) + 1
+    for qkey in appendable:
+        # Refuse to clobber a non-empty header cell
+        if next_col < len(gs_header) and str(gs_header[next_col]).strip():
+            print(f"  WARNING: column {col_to_letter(next_col)} not empty "
+                  f"('{gs_header[next_col]}'); stopping further appends")
+            break
+        qkey_to_gs_col[qkey] = next_col
+        next_col += 1
+
+    for qkey in sorted(qkey_to_gs_col, key=quarter_sort_key):
+        print(f"  {qkey}: Excel col {qkey_to_excel_col[qkey]} → GS col "
+              f"{col_to_letter(qkey_to_gs_col[qkey])}"
+              f"{' [new]' if qkey not in gs_qcols else ''}")
+
+    # Expand grid if the appended columns run past it
+    max_col = max(qkey_to_gs_col.values()) if qkey_to_gs_col else 0
+    if max_col >= col_count:
+        required = max_col + 6
+        if not dry_run:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={'requests': [{
+                    'updateSheetProperties': {
+                        'properties': {
+                            'sheetId': target_sheet_id,
+                            'gridProperties': {'columnCount': required}
+                        },
+                        'fields': 'gridProperties.columnCount'
+                    }
+                }]}
+            ).execute()
+            print(f"  ✓ Expanded grid to {required} columns")
+
+    # Match IS items by name, same as the annual flow
+    gs_mapping, _, _ = read_gs_section(service, spreadsheet_id, gs_sheet_name, 'Income Statement')
+    if gs_mapping is None:
+        print("  SKIP: Income Statement section not found")
+        return
+
+    excel_col_to_gs_col = {qkey_to_excel_col[q]: c for q, c in qkey_to_gs_col.items()}
+    sorted_excel_cols = sorted(excel_col_to_gs_col)
+
+    updates = []  # (gs_col, gs_row_0idx, val, is_eps)
+    matched = unmatched = 0
+    for norm_name, item_data in excel_items.items():
+        if norm_name not in gs_mapping:
+            unmatched += 1
+            continue
+        gs_row = gs_mapping[norm_name]
+        is_eps = is_eps_item(norm_name)
+        for excel_col_idx in sorted_excel_cols:
+            pos = col_pos[excel_col_idx]
+            if pos < len(item_data['values']):
+                val = item_data['values'][pos]
+                if val != '':
+                    updates.append((excel_col_to_gs_col[excel_col_idx], gs_row, val, is_eps))
+        matched += 1
+
+    if dry_run:
+        print(f"  [DRY RUN] Would write {len(updates)} cells across "
+              f"{len(excel_col_to_gs_col)} quarter columns ({matched} matched, {unmatched} unmatched)")
+        return
+
+    requests = []
+    # Headers for newly appended quarter columns
+    for qkey, gs_col in qkey_to_gs_col.items():
+        if qkey in gs_qcols:
+            continue
+        requests.append({
+            'updateCells': {
+                'range': {
+                    'sheetId': target_sheet_id,
+                    'startRowIndex': 0, 'endRowIndex': 1,
+                    'startColumnIndex': gs_col,
+                    'endColumnIndex': gs_col + 1,
+                },
+                'rows': [{'values': [{'userEnteredValue': {'stringValue': qkey}}]}],
+                'fields': 'userEnteredValue',
+            }
+        })
+
+    for gs_col, gs_row, val, is_eps in updates:
+        cell_value = {}
+        if isinstance(val, (int, float)):
+            num_fmt = '#,##0.00' if is_eps else '#,##0'
+            cell_value['userEnteredValue'] = {'numberValue': val}
+            cell_value['userEnteredFormat'] = {'numberFormat': {'type': 'NUMBER', 'pattern': num_fmt}}
+        else:
+            cell_value['userEnteredValue'] = {'stringValue': str(val)}
+        fields = 'userEnteredValue'
+        if 'userEnteredFormat' in cell_value:
+            fields += ',userEnteredFormat'
+        requests.append({
+            'updateCells': {
+                'range': {
+                    'sheetId': target_sheet_id,
+                    'startRowIndex': gs_row,
+                    'endRowIndex': gs_row + 1,
+                    'startColumnIndex': gs_col,
+                    'endColumnIndex': gs_col + 1,
+                },
+                'rows': [{'values': [cell_value]}],
+                'fields': fields,
+            }
+        })
+
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests}
+        ).execute()
+        print(f"  ✓ Wrote {len(qkey_to_gs_col) - len(gs_qcols)} new quarter headers "
+              f"and {len(updates)} cells for {matched} items")
+    else:
+        print(f"  No data to write ({matched} matched)")
+
+
 # ── Capital Structure Details ──────────────────────────────────────────────
 
 def update_capital_structure_details(wb, service, spreadsheet_id, gs_sheet_name):
@@ -966,16 +1239,21 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
 
     print(f"\nFound {len(xls_files)} Excel files")
 
-    files_by_spreadsheet = defaultdict(list)
+    files_by_spreadsheet = defaultdict(list)       # annual files
+    quarterly_by_spreadsheet = defaultdict(list)   # quarterly IS files
     unmatched_files = []
 
     for xls_path in xls_files:
         filename = os.path.basename(xls_path)
         code = extract_code_from_filename(filename)
-        
+        is_quarterly = 'quarterly' in filename.lower()
+
         if code and code in routing:
             sid, sheet_name = routing[code]
-            files_by_spreadsheet[sid].append((xls_path, sheet_name, code))
+            if is_quarterly:
+                quarterly_by_spreadsheet[sid].append((xls_path, sheet_name, code))
+            else:
+                files_by_spreadsheet[sid].append((xls_path, sheet_name, code))
         else:
             unmatched_files.append((filename, code))
 
@@ -984,7 +1262,11 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
         print(f"  Spreadsheet {sid[:20]}... → {len(files)} files")
         for _, sheet_name, code in files:
             print(f"    {code:8s} → {sheet_name}")
-    
+    for sid, files in quarterly_by_spreadsheet.items():
+        print(f"  Spreadsheet {sid[:20]}... → {len(files)} QUARTERLY IS files")
+        for _, sheet_name, code in files:
+            print(f"    {code:8s} → {sheet_name}")
+
     if unmatched_files:
         print(f"\n  Unmatched ({len(unmatched_files)} files):")
         for fname, code in unmatched_files:
@@ -992,20 +1274,30 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
 
     total_processed = 0
     for sid in spreadsheet_ids:
-        if sid not in files_by_spreadsheet:
+        if sid not in files_by_spreadsheet and sid not in quarterly_by_spreadsheet:
             continue
-        
-        files = files_by_spreadsheet[sid]
+
+        files = files_by_spreadsheet.get(sid, [])
+        qfiles = quarterly_by_spreadsheet.get(sid, [])
         print(f"\n{'='*60}")
-        print(f"Processing spreadsheet {sid[:20]}... ({len(files)} files)")
+        print(f"Processing spreadsheet {sid[:20]}... "
+              f"({len(files)} annual, {len(qfiles)} quarterly)")
         print(f"{'='*60}")
-        
+
         for xls_path, sheet_name, code in files:
             try:
                 process_excel_to_gs(xls_path, sheet_name, spreadsheet_id=sid, dry_run=dry_run)
                 total_processed += 1
             except Exception as e:
                 print(f"\n  ✗ FAILED: {code} ({sheet_name}): {e}")
+
+        # Quarterly IS files run after annual ones for the same tab
+        for xls_path, sheet_name, code in qfiles:
+            try:
+                process_quarterly_excel_to_gs(xls_path, sheet_name, spreadsheet_id=sid, dry_run=dry_run)
+                total_processed += 1
+            except Exception as e:
+                print(f"\n  ✗ FAILED (quarterly): {code} ({sheet_name}): {e}")
 
     print(f"\n{'='*60}")
     print(f"Batch complete: {total_processed} processed, {len(unmatched_files)} unmatched")
@@ -1038,4 +1330,7 @@ if __name__ == '__main__':
             print(f"ERROR: File not found: {args.excel_path}")
             sys.exit(1)
 
-        process_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
+        if 'quarterly' in os.path.basename(args.excel_path).lower():
+            process_quarterly_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
+        else:
+            process_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
