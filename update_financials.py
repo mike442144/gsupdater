@@ -957,7 +957,8 @@ def process_quarterly_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None
             spreadsheetId=spreadsheet_id,
             body={'requests': requests}
         ).execute()
-        print(f"  ✓ Wrote {len(qkey_to_gs_col) - len(gs_qcols)} new quarter headers "
+        new_headers = sum(1 for q in qkey_to_gs_col if q not in gs_qcols)
+        print(f"  ✓ Wrote {new_headers} new quarter headers "
               f"and {len(updates)} cells for {matched} items")
     else:
         print(f"  No data to write ({matched} matched)")
