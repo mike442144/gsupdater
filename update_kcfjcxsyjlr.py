@@ -126,7 +126,7 @@ def extract_dedu_parent_profit_data(csv_data):
     return result
 
 
-def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=False):
+def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=False, year_count=5, quarter_count=20):
     """Update 扣非净利润 for a single company."""
     print(f"\n{'='*60}")
     print(f"Updating 扣非净利润 for: {sheet_name} (code: {stock_code})")
@@ -242,13 +242,13 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
     
     # Run eastmoney for yearly data
     print(f"  Fetching yearly data from eastmoney...")
-    yearly_csv = run_eastmoney(stock_code, 'y', 5)
+    yearly_csv = run_eastmoney(stock_code, 'y', year_count)
     yearly_data = extract_kcfjcxsyjlr_data(yearly_csv)
     print(f"    Got {len(yearly_data)} years: {list(yearly_data.keys())}")
     
     # Run eastmoney for quarterly data (20 quarters)
     print(f"  Fetching quarterly data from eastmoney...")
-    quarterly_csv = run_eastmoney(stock_code, 'q', 20)
+    quarterly_csv = run_eastmoney(stock_code, 'q', quarter_count)
     quarterly_data = extract_dedu_parent_profit_data(quarterly_csv)
     print(f"    Got {len(quarterly_data)} quarters: {list(quarterly_data.keys())}")
     
@@ -458,6 +458,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Preview changes without writing')
     parser.add_argument('--sheet-id', required=True, help='Google Sheets spreadsheet ID')
     parser.add_argument('--codes', help='Comma-separated stock codes (default: all A-shares from Summary)')
+    parser.add_argument('--year-count', type=int, default=5, help='Years of annual data to fetch (default: 5)')
+    parser.add_argument('--quarter-count', type=int, default=20, help='Quarters of quarterly data to fetch (default: 20)')
     args = parser.parse_args()
     
     # Initialize Google Sheets API
@@ -482,7 +484,8 @@ def main():
             continue
         
         sheet_name = mapping[code]
-        update_kcfjcxsyjlr(service, args.sheet_id, sheet_name, code, dry_run=args.dry_run)
+        update_kcfjcxsyjlr(service, args.sheet_id, sheet_name, code, dry_run=args.dry_run,
+                           year_count=args.year_count, quarter_count=args.quarter_count)
 
 
 if __name__ == '__main__':
