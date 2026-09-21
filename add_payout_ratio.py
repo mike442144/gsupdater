@@ -151,7 +151,8 @@ def scan_tab(service, spreadsheet_id, sheet_name):
 
 
 def find_data_columns(service, spreadsheet_id, sheet_name):
-    """Data columns = columns from D onward whose row-1 header contains a 4-digit year."""
+    """Data columns = columns from D onward whose row-1 header contains a 4-digit year.
+    Quarter headers ("Q1 2021") are excluded — payout ratio is an annual-only metric here."""
     result = _retry(lambda: service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
         ranges=[f"'{sheet_name}'!A1:CV1"],
@@ -164,7 +165,8 @@ def find_data_columns(service, spreadsheet_id, sheet_name):
     for j in range(3, len(vals)):
         uev = vals[j].get('userEnteredValue', {})
         text = uev.get('stringValue', '') or vals[j].get('formattedValue', '')
-        if text and re.search(r'\d{4}', str(text)):
+        if (text and re.search(r'\d{4}', str(text))
+                and not re.match(r'^Q[1-4] \d{4}$', str(text).strip())):
             cols.append(j)
     return cols
 

@@ -24,9 +24,9 @@ Options:
 
 Reads Capital IQ Excel files (`.xls`/`.xlsx`) and writes Income Statement, Balance Sheet, and Cash Flow data into the corresponding Google Sheets. Matches rows by item name (column B), not row number, so sheet structure changes are handled safely.
 
-Also writes Payout Ratio formulas (`DPS / Basic EPS`), copies Key Stats formulas to new columns automatically, and syncs Capital Structure Details from Excel to the Google Sheets 资本结构 tab.
+Also writes Payout Ratio formulas (`DPS / Basic EPS`), copies Key Stats formulas to new columns automatically (relative copy — every column reference shifts by the source→target offset, so prior-column bases like YoY denominators and ROIC two-period averages move with the formula), and syncs Capital Structure Details from Excel to the Google Sheets 资本结构 tab.
 
-**Quarterly files** (`*Financials Quarterly.xls`, `*Income Statement Quarterly.xls` — detected by `Quarterly` in the filename, or by quarter columns in the workbook's Income Statement header with no annual columns) take a separate path: quarterly Income Statement columns are written into the tab's quarterly columns (`Q1 2021`, `Q2 2021`, …) by quarter key. Quarters newer than the last quarterly column are appended (grid expanded if needed); the CIQ quirk where fiscal Q4 is stamped `Jan-01-YYYY` is rolled back one year, and duplicate quarters (Restated / Reclassified / Press Release variants) resolve to the rightmost Excel column. Income Statement only — quarterly BS/CF sheets are ignored.
+**Quarterly files** (`*Financials Quarterly.xls`, `*Income Statement Quarterly.xls` — detected by `Quarterly` in the filename, or by quarter columns in the workbook's Income Statement header with no annual columns) take a separate path: quarterly Income Statement columns are written into the tab's quarterly columns (`Q1 2021`, `Q2 2021`, …) by quarter key. Quarters newer than the last quarterly column are appended (grid expanded if needed); the CIQ quirk where fiscal Q4 is stamped `Jan-01-YYYY` is rolled back one year, and duplicate quarters (Restated / Reclassified / Press Release variants) resolve to the rightmost Excel column. Income Statement only — quarterly BS/CF sheets are ignored, and the IS `Payout Ratio` line is skipped (per-quarter payout is meaningless; CIQ exports `NA` there).
 
 All API requests are paced (~54/min) with 429/5xx retry — Google's per-user Sheets quota is 60 read + 60 write requests per minute, which plain batch runs exceed.
 
@@ -229,6 +229,20 @@ python wrap_keystats_refs.py --item "Minority Interest"                    # all
 python wrap_keystats_refs.py --item "Effective Tax Rate %" --spreadsheet-id <ID>
 python wrap_keystats_refs.py --item "Minority Interest" --dry-run
 ```
+
+### `fix_quarterly_keystats.py` — Repair quarterly-column formulas
+
+One-off repair for tabs written before quarter columns were distinguished from annual ones. Per `<name>财务` tab of a spreadsheet:
+
+- **YoY rows**: quarter-column formulas are rewritten to use the same quarter of the prior year as base (formula shape and item refs preserved — only the base column letter changes). Quarter columns with no prior-year twin (e.g. the first quarter year in the grid) are cleared. Empty YoY quarter cells are backfilled from the row's annual-column formula.
+- **ROIC rows and Payout Ratio rows** (Key Stats and IS sections): cleared in quarter columns — these metrics are annual-only.
+
+```bash
+python fix_quarterly_keystats.py --spreadsheet-id <ID>            # repair
+python fix_quarterly_keystats.py --spreadsheet-id <ID> --dry-run  # preview only
+```
+
+The writer scripts (`create_company_tab.py`, `add_yoy_section.py`, `add_roic_methods.py`, `add_payout_ratio.py`) now handle quarter columns correctly, so tabs written after the fix don't need this.
 
 ### `audit_roic_rollout.py` — Safety audit before a Key Stats rollout
 

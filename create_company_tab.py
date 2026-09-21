@@ -856,8 +856,18 @@ def resolve_formula(template_str, col_letter, prev_col_letter, item_to_row):
     return re.sub(r'(__C__|__PC__)\{([?!]?[^}]+)\}', replace_item, template_str)
 
 
+def quarter_header_key(text):
+    """'Q1 2021' -> (1, 2021); None for annual/LTM/other headers."""
+    m = re.match(r'^Q([1-4]) (\d{4})$', str(text).strip())
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
 def find_data_columns(service, spreadsheet_id, sheet_name):
-    """Find all data columns (columns with year headers, starting from col D)."""
+    """Find all data columns (columns with year headers, starting from col D).
+
+    Returns a list of (col_idx, header_text) — quarter headers ("Q1 2021")
+    also match, so callers must classify via quarter_header_key().
+    """
     sheets = get_sheet_names(service, spreadsheet_id)
     col_count = sheets.get(sheet_name, {}).get('colCount', 200)
     end_col = col_to_letter(min(col_count - 1, 200))
@@ -877,7 +887,7 @@ def find_data_columns(service, spreadsheet_id, sheet_name):
         fv = cell.get('formattedValue', '')
         text = uev.get('stringValue', fv) or uev.get('numberValue', 0) or fv
         if text and re.search(r'\d{4}', str(text)):
-            data_cols.append(j)
+            data_cols.append((j, str(text)))
 
     return data_cols
 
@@ -925,9 +935,16 @@ def write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_i
         print("  WARNING: No data columns found")
         return
 
+    qcol_by_key = {}
+    for dc, hdr in data_cols:
+        qkey = quarter_header_key(hdr)
+        if qkey:
+            qcol_by_key[qkey] = dc
+
     requests = []
     for item_name, template in FORMULA_TEMPLATES.items():
         item_name_lower = item_name.lower()
+        is_yoy = item_name_lower.endswith('yoy')
 
         # Find item row in Key Stats area (local map, not global)
         found_item_row = ks_items.get(item_name_lower)
@@ -944,11 +961,29 @@ def write_key_stats_formulas(service, spreadsheet_id, sheet_name, target_sheet_i
 
         # Resolve formula: item references like {Net Income} resolve to IS/BS/CF rows
         # (the global item_to_row picks up those, not Key Stats)
-        for ci, data_col in enumerate(data_cols):
-            col_letter = col_to_letter(data_col)
-            pc = col_to_letter(max(0, data_cols[ci - 1])) if ci > 0 else col_to_letter(max(0, data_col - 1))
+        for ci, (data_col, hdr_text) in enumerate(data_cols):
+            qkey = quarter_header_key(hdr_text)
+            if qkey is not None:
+                # Annual-only metrics: prior-column averaging (ROIC) and
+                # DPS/EPS payout are not meaningful for a single quarter.
+                if item_name_lower.startswith(('roic', 'payout ratio')):
+                    continue
+                if is_yoy:
+                    # Quarterly YoY compares to the same quarter of the prior
+                    # year, not the previous column (that is QoQ).
+                    prev_idx = qcol_by_key.get((qkey[0], qkey[1] - 1))
+                    if prev_idx is None:
+                        continue
+                    col_letter = col_to_letter(data_col)
+                    prev_letter = col_to_letter(prev_idx)
+                else:
+                    col_letter = col_to_letter(data_col)
+                    prev_letter = col_to_letter(data_cols[ci - 1][0]) if ci > 0 else col_to_letter(max(0, data_col - 1))
+            else:
+                col_letter = col_to_letter(data_col)
+                prev_letter = col_to_letter(data_cols[ci - 1][0]) if ci > 0 else col_to_letter(max(0, data_col - 1))
 
-            formula = resolve_formula(template['formula'], col_letter, pc, item_to_row)
+            formula = resolve_formula(template['formula'], col_letter, prev_letter, item_to_row)
             cell_value = {
                 'userEnteredValue': {'formulaValue': formula},
                 'userEnteredFormat': {'numberFormat': dict(template['format'])},

@@ -99,7 +99,18 @@ def find_key_stats_section(service, spreadsheet_id, sheet_name):
     return ks_start, ks_end, items, rows
 
 
+def quarter_header_key(text):
+    """'Q1 2021' -> (1, 2021); None for annual/LTM/other headers."""
+    m = re.match(r'^Q([1-4]) (\d{4})$', str(text).strip())
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
 def find_data_columns(service, spreadsheet_id, sheet_name):
+    """Find all data columns (columns with year headers, starting from col D).
+
+    Returns a list of (col_idx, header_text) — quarter headers ("Q1 2021")
+    also match, so callers must classify via quarter_header_key().
+    """
     props = get_sheet_properties(service, spreadsheet_id, sheet_name)
     col_count = props.get('gridProperties', {}).get('columnCount', 200) if props else 200
     end_col = col_to_letter(min(col_count - 1, 200))
@@ -119,7 +130,7 @@ def find_data_columns(service, spreadsheet_id, sheet_name):
         fv = cell.get('formattedValue', '')
         text = uev.get('stringValue', fv) or uev.get('numberValue', 0) or fv
         if text and re.search(r'\d{4}', str(text)):
-            data_cols.append(j)
+            data_cols.append((j, str(text)))
 
     return data_cols
 
@@ -170,6 +181,12 @@ def rewrite_yoy_formulas(service, spreadsheet_id, sheet_name, dry_run=False):
         print("  WARNING: No data columns found")
         return False
 
+    qcol_by_key = {}
+    for dc, hdr in data_cols:
+        qkey = quarter_header_key(hdr)
+        if qkey:
+            qcol_by_key[qkey] = dc
+
     requests = []
     last = None
     for item_name, template in YOY_ITEMS:
@@ -177,9 +194,28 @@ def rewrite_yoy_formulas(service, spreadsheet_id, sheet_name, dry_run=False):
         if row0 is None:
             print(f"  SKIP — '{item_name}' row not found (section may be absent)")
             continue
-        for ci, dc in enumerate(data_cols):
+        for ci, (dc, hdr_text) in enumerate(data_cols):
             cl = col_to_letter(dc)
-            pc = col_to_letter(data_cols[ci - 1]) if ci > 0 else col_to_letter(max(0, dc - 1))
+            qkey = quarter_header_key(hdr_text)
+            if qkey is not None:
+                # Quarterly YoY compares to the same quarter of the prior year,
+                # not the previous column (that is QoQ). No prior-year twin
+                # column → clear the wrong QoQ formula.
+                prev_idx = qcol_by_key.get((qkey[0], qkey[1] - 1))
+                if prev_idx is None:
+                    requests.append({
+                        'updateCells': {
+                            'range': {'sheetId': sheet_id,
+                                      'startRowIndex': row0, 'endRowIndex': row0 + 1,
+                                      'startColumnIndex': dc, 'endColumnIndex': dc + 1},
+                            'rows': [{'values': [{}]}],
+                            'fields': 'userEnteredValue',
+                        }
+                    })
+                    continue
+                pc = col_to_letter(prev_idx)
+            else:
+                pc = col_to_letter(data_cols[ci - 1][0]) if ci > 0 else col_to_letter(max(0, dc - 1))
             formula = resolve_formula(template, cl, pc, item_to_row)
             last = (item_name, row0 + 1, cl, formula)
             requests.append({
@@ -433,6 +469,12 @@ def add_yoy_section(service, spreadsheet_id, sheet_name, dry_run=False):
         print("  WARNING: No data columns found, skipping YoY formulas")
         return True
 
+    qcol_by_key = {}
+    for dc, hdr in data_cols:
+        qkey = quarter_header_key(hdr)
+        if qkey:
+            qcol_by_key[qkey] = dc
+
     formula_requests = []
     for item_name, template in YOY_ITEMS:
         item_row_0idx = item_to_row.get(item_name.lower())
@@ -440,9 +482,19 @@ def add_yoy_section(service, spreadsheet_id, sheet_name, dry_run=False):
             print(f"  WARNING: Item '{item_name}' not found in sheet")
             continue
 
-        for ci, data_col in enumerate(data_cols):
+        for ci, (data_col, hdr_text) in enumerate(data_cols):
             col_letter = col_to_letter(data_col)
-            pc = col_to_letter(max(0, data_cols[ci - 1])) if ci > 0 else col_to_letter(max(0, data_col - 1))
+            qkey = quarter_header_key(hdr_text)
+            if qkey is not None:
+                # Quarterly YoY compares to the same quarter of the prior year,
+                # not the previous column (that is QoQ). Skip when no prior-year
+                # twin column exists (fresh section — nothing wrong to clear).
+                prev_idx = qcol_by_key.get((qkey[0], qkey[1] - 1))
+                if prev_idx is None:
+                    continue
+                pc = col_to_letter(prev_idx)
+            else:
+                pc = col_to_letter(data_cols[ci - 1][0]) if ci > 0 else col_to_letter(max(0, data_col - 1))
 
             formula = resolve_formula(template, col_letter, pc, item_to_row)
             cell_value = {

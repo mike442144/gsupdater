@@ -393,8 +393,6 @@ def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, tar
 
     row_data = data[0].get('rowData', [])
     
-    source_letter = col_to_letter(source_col)
-    
     requests = []
     for row_idx, row in enumerate(row_data):
         values = row.get('values', [])
@@ -409,13 +407,33 @@ def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, tar
                 source_fmt = cell.get('effectiveFormat', {}).get('numberFormat', {})
                 
                 for target_col in target_cols:
-                    target_letter = col_to_letter(target_col)
+                    # Relative copy: shift EVERY column reference by the source→target
+                    # delta, not just refs to the source column. Prior-column bases
+                    # (YoY, ROIC two-period averaging) must move with the formula —
+                    # replacing only the source letter left the base stuck on an
+                    # older year.
+                    delta = target_col - source_col
+
+                    def _shift_col(letter, _delta=delta):
+                        idx = 0
+                        for ch in letter:
+                            idx = idx * 26 + (ord(ch) - 64)
+                        idx += _delta
+                        shifted = ''
+                        while idx > 0:
+                            idx, rem = divmod(idx - 1, 26)
+                            shifted = chr(65 + rem) + shifted
+                        return shifted
+
                     new_formula = re.sub(
-                        rf'\b{source_letter}(\d)',
-                        rf'{target_letter}\1',
-                        original_formula
-                    )
-                    new_formula = new_formula.replace(f'{source_letter}:{source_letter}', f'{target_letter}:{target_letter}')
+                        r'\b([A-Z]{1,3})(\d+)',
+                        lambda m, _d=delta: _shift_col(m.group(1), _d) + m.group(2),
+                        original_formula)
+                    # Bare full-column ranges (e.g. U:U) carry no digits — shift separately
+                    new_formula = re.sub(
+                        r'\b([A-Z]{1,3}):([A-Z]{1,3})\b',
+                        lambda m, _d=delta: f'{_shift_col(m.group(1), _d)}:{_shift_col(m.group(2), _d)}',
+                        new_formula)
                     
                     cell_value = {
                         'userEnteredValue': {'formulaValue': new_formula},
@@ -916,6 +934,9 @@ def process_quarterly_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None
     for norm_name, item_data in excel_items.items():
         if norm_name not in gs_mapping:
             unmatched += 1
+            continue
+        if norm_name.startswith('payout ratio'):
+            # Per-quarter payout is meaningless — CIQ exports 'NA' here
             continue
         gs_row = gs_mapping[norm_name]
         is_eps = is_eps_item(norm_name)
