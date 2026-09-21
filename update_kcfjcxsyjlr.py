@@ -264,9 +264,24 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
                 updates.append((col_idx, value, f'{year} annual'))
     
     # 2. Quarterly data - fill into empty columns (no insertDimension)
-    all_quarters_from_eastmoney = sorted(quarterly_data.keys(), key=lambda x: (x.split('_')[1], x.split('_')[0]))
+    def _qkey(q):
+        quarter, year = q.split('_')
+        return (int(year), int(quarter[1:]))
+
+    all_quarters_from_eastmoney = sorted(quarterly_data.keys(), key=_qkey)
     new_quarters = [q for q in all_quarters_from_eastmoney if q not in quarter_cols]
+    # Only append quarters NEWER than the last quarter column — older ones
+    # (e.g. fetched beyond the grid's start) would land right of newer
+    # columns and scramble the chronology.
+    if quarter_cols:
+        last_q = max(quarter_cols, key=_qkey)
+        stale = [q for q in new_quarters if _qkey(q) < _qkey(last_q)]
+        if stale:
+            print(f"  Skipping {len(stale)} quarters older than last column "
+                  f"{last_q}: {stale[0]}..{stale[-1]}")
+        new_quarters = [q for q in new_quarters if _qkey(q) > _qkey(last_q)]
     
+    appended_qkeys = set()
     if new_quarters:
         print(f"  Appending {len(new_quarters)} new quarter columns: {new_quarters[0]} to {new_quarters[-1]}")
         
@@ -329,6 +344,7 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
                 break
             col_idx = empty_cols[i]
             quarter_cols[qkey] = col_idx
+            appended_qkeys.add(qkey)
             updates.append((col_idx, quarterly_data[qkey], qkey))
             quarter, year = qkey.split('_')
             header_updates.append((col_idx, f'{quarter} {year}'))
@@ -357,9 +373,11 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
                 print(f"  ✓ Wrote {len(requests)} quarter headers")
 
     # 2b. Backfill empty existing quarter columns with eastmoney data
+    # (quarters just appended above are already in `updates`)
     backfilled = 0
     for qkey, col_idx in quarter_cols.items():
-        if qkey in quarterly_data and col_idx not in existing_data:
+        if (qkey not in appended_qkeys and qkey in quarterly_data
+                and col_idx not in existing_data):
             updates.append((col_idx, quarterly_data[qkey], qkey))
             backfilled += 1
     if backfilled:
