@@ -274,6 +274,29 @@ def read_excel_sheet(wb, sheet_name, quarterly=False):
     return items, col_info
 
 
+def workbook_is_quarterly(excel_path):
+    """Detect a quarterly export by content: the Income Statement sheet has
+    quarter columns and no annual columns. CIQ names some quarterly exports
+    'Financials Income Statement.xls' with no 'Quarterly' in the filename.
+    """
+    try:
+        wb = xlrd.open_workbook(excel_path)
+        sheet = wb.sheet_by_name('Income Statement')
+    except Exception:
+        return False
+    for i in range(sheet.nrows):
+        first = str(sheet.cell_value(i, 0)).strip().lower()
+        if first == 'income statement':
+            has_quarter = any(
+                parse_quarter_header(sheet.cell_value(i + 1, j))
+                for j in range(1, sheet.ncols))
+            has_annual = any(
+                extract_header_info(sheet.cell_value(i + 1, j))[0]
+                for j in range(1, sheet.ncols))
+            return has_quarter and not has_annual
+    return False
+
+
 # ── Read Google Sheets ─────────────────────────────────────────────────────
 
 def read_gs_section(service, spreadsheet_id, sheet_name, section_header):
@@ -1247,7 +1270,8 @@ def batch_process(directory, spreadsheet_ids=None, dry_run=False):
     for xls_path in xls_files:
         filename = os.path.basename(xls_path)
         code = extract_code_from_filename(filename)
-        is_quarterly = 'quarterly' in filename.lower()
+        is_quarterly = ('quarterly' in filename.lower()
+                        or workbook_is_quarterly(xls_path))
 
         if code and code in routing:
             sid, sheet_name = routing[code]
@@ -1331,7 +1355,8 @@ if __name__ == '__main__':
             print(f"ERROR: File not found: {args.excel_path}")
             sys.exit(1)
 
-        if 'quarterly' in os.path.basename(args.excel_path).lower():
+        if ('quarterly' in os.path.basename(args.excel_path).lower()
+                or workbook_is_quarterly(args.excel_path)):
             process_quarterly_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
         else:
             process_excel_to_gs(args.excel_path, args.gs_sheet_name, spreadsheet_id=args.spreadsheet_id, dry_run=args.dry_run)
