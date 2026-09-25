@@ -717,6 +717,31 @@ def build_sheet_structure(service, spreadsheet_id, target_sheet_name, excel_path
         ).execute()
         print(f"  ✓ Wrote {len(header_requests)} header cells")
 
+    # 3b. Preset the 扣非净利润 row style: literal values land as blue
+    # #,##0 (matches update_kcfjcxsyjlr.py's write style).
+    if '扣非净利润' in ks_items:
+        kcfj_row_idx = 3 + ks_items.index('扣非净利润')
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': [{
+                'repeatCell': {
+                    'range': {
+                        'sheetId': target_sheet_id,
+                        'startRowIndex': kcfj_row_idx,
+                        'endRowIndex': kcfj_row_idx + 1,
+                        'startColumnIndex': 4,
+                        'endColumnIndex': col_idx,
+                    },
+                    'cell': {'userEnteredFormat': {
+                        'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'},
+                        'textFormat': {'foregroundColor': {'blue': 1}},
+                    }},
+                    'fields': 'userEnteredFormat(numberFormat,textFormat.foregroundColor)',
+                }
+            }]}
+        ).execute()
+        print(f"  ✓ Preset 扣非净利润 row style (blue #,##0)")
+
     # 4. Set column widths and frozen panes
     requests = [
         # Column widths: A=20, B=80, C=80, D=40

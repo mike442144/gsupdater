@@ -372,6 +372,13 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
                 ).execute()
                 print(f"  ✓ Wrote {len(requests)} quarter headers")
 
+        # Pull Key Stats formulas right into the appended quarter columns
+        if not dry_run and header_updates:
+            import update_financials as uf
+            uf.extend_key_stats_formulas_quarters(
+                service, spreadsheet_id, sheet_name,
+                [c for c, _ in header_updates], target_sheet_id, grid_width)
+
     # 2b. Backfill empty existing quarter columns with eastmoney data
     # (quarters just appended above are already in `updates`)
     backfilled = 0
@@ -410,9 +417,14 @@ def update_kcfjcxsyjlr(service, spreadsheet_id, sheet_name, stock_code, dry_run=
                 cell_value = {}
                 if isinstance(value, str) and value.startswith('='):
                     cell_value['userEnteredValue'] = {'formulaValue': value}
+                    cell_value['userEnteredFormat'] = {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}
                 else:
                     cell_value['userEnteredValue'] = {'numberValue': value}
-                    cell_value['userEnteredFormat'] = {'numberFormat': {'type': 'NUMBER', 'pattern': '0'}}
+                    # Literal 扣非 values render blue; formula cells keep the default color
+                    cell_value['userEnteredFormat'] = {
+                        'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'},
+                        'textFormat': {'foregroundColor': {'blue': 1}},
+                    }
                 
                 requests.append({
                     'updateCells': {

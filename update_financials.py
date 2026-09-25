@@ -345,6 +345,32 @@ def read_gs_section(service, spreadsheet_id, sheet_name, section_header):
 
 # ── Key Stats formula copy ─────────────────────────────────────────────────
 
+def shift_col_letter(letter, delta):
+    """Shift an A1-style column letter by `delta` columns ('U', +1) -> 'V'."""
+    idx = 0
+    for ch in letter:
+        idx = idx * 26 + (ord(ch) - 64)
+    idx += delta
+    shifted = ''
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        shifted = chr(65 + rem) + shifted
+    return shifted
+
+
+def shift_formula_columns(formula, delta):
+    """Shift every column reference in a formula by `delta` columns."""
+    out = re.sub(
+        r'\b([A-Z]{1,3})(\d+)',
+        lambda m: shift_col_letter(m.group(1), delta) + m.group(2),
+        formula)
+    # Bare full-column ranges (e.g. U:U) carry no digits — shift separately
+    return re.sub(
+        r'\b([A-Z]{1,3}):([A-Z]{1,3})\b',
+        lambda m: f'{shift_col_letter(m.group(1), delta)}:{shift_col_letter(m.group(2), delta)}',
+        out)
+
+
 def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, target_cols, target_sheet_id, grid_width):
     """Copy formulas from source column to target columns in Key Stats section.
     Also copies numberFormat from source cell to preserve display format.
@@ -413,27 +439,7 @@ def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, tar
                     # replacing only the source letter left the base stuck on an
                     # older year.
                     delta = target_col - source_col
-
-                    def _shift_col(letter, _delta=delta):
-                        idx = 0
-                        for ch in letter:
-                            idx = idx * 26 + (ord(ch) - 64)
-                        idx += _delta
-                        shifted = ''
-                        while idx > 0:
-                            idx, rem = divmod(idx - 1, 26)
-                            shifted = chr(65 + rem) + shifted
-                        return shifted
-
-                    new_formula = re.sub(
-                        r'\b([A-Z]{1,3})(\d+)',
-                        lambda m, _d=delta: _shift_col(m.group(1), _d) + m.group(2),
-                        original_formula)
-                    # Bare full-column ranges (e.g. U:U) carry no digits — shift separately
-                    new_formula = re.sub(
-                        r'\b([A-Z]{1,3}):([A-Z]{1,3})\b',
-                        lambda m, _d=delta: f'{_shift_col(m.group(1), _d)}:{_shift_col(m.group(2), _d)}',
-                        new_formula)
+                    new_formula = shift_formula_columns(original_formula, delta)
                     
                     cell_value = {
                         'userEnteredValue': {'formulaValue': new_formula},
@@ -470,6 +476,131 @@ def copy_key_stats_formulas(service, spreadsheet_id, sheet_name, source_col, tar
 def is_eps_item(norm_name):
     """Check if the item is EPS-related (needs 2 decimal format)."""
     return 'eps' in norm_name or 'per share' in norm_name
+
+
+def extend_key_stats_formulas_quarters(service, spreadsheet_id, sheet_name,
+                                       target_cols, target_sheet_id, grid_width):
+    """Pull Key Stats formulas right into newly appended QUARTER columns.
+
+    Source is the column immediately left of the first target (the previous
+    quarter). Quarter columns are not annual ones:
+    - ROIC / Payout Ratio rows are skipped (annual-only metrics)
+    - YoY rows are rebuilt with the same quarter of the prior year as base
+    - everything else relative-copies from the source column
+    """
+    if not target_cols:
+        return
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{sheet_name}'!A1:C60"
+    ).execute()
+    label_rows = result.get('values', [])
+
+    ks_start = None
+    ks_end = len(label_rows)
+    section_headers = ('income statement', 'balance sheet', 'cash flow',
+                       'key stats', 'supplemental', 'multiples', 'ratios',
+                       'segments', 'capitalization')
+    for i, row in enumerate(label_rows):
+        val = row[0].strip().lower() if row and row[0] else ''
+        if val == 'key stats':
+            ks_start = i
+        elif ks_start is not None and i > ks_start and val in section_headers:
+            ks_end = i
+            break
+    if ks_start is None:
+        print("  WARNING: Key Stats section not found, skipping quarter formula pull")
+        return
+
+    header_result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{sheet_name}'!A1:{col_to_letter(grid_width - 1)}1"
+    ).execute()
+    header = header_result.get('values', [[]])[0]
+
+    qcol_by_key = {}
+    for j, h in enumerate(header):
+        m = re.match(r'^Q([1-4]) (\d{4})$', str(h).strip())
+        if m:
+            qcol_by_key[(int(m.group(1)), int(m.group(2)))] = j
+
+    end_row = ks_end
+    end_col_letter = col_to_letter(grid_width - 1)
+    grid = service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        ranges=[f"'{sheet_name}'!A2:{end_col_letter}{end_row}"],
+        includeGridData=True
+    ).execute()
+    row_data = grid.get('sheets', [{}])[0].get('data', [{}])[0].get('rowData', [])
+
+    source_col = min(target_cols) - 1
+    yoy_re = re.compile(r'^=(?:IFERROR\(\s*)?([A-Z]{1,3})(\d+)\s*/\s*([A-Z]{1,3})(\d+)\s*-\s*1\s*,?\s*\)?$')
+
+    requests = []
+    for row_idx, row in enumerate(row_data):
+        values = row.get('values', [])
+        if source_col >= len(values):
+            continue
+        cell = values[source_col]
+        val = cell.get('userEnteredValue', {})
+        if 'formulaValue' not in val:
+            continue
+        original_formula = val['formulaValue']
+        gs_row = row_idx + 2  # 1-indexed
+
+        label_row = label_rows[gs_row - 1] if gs_row - 1 < len(label_rows) else []
+        b_val = label_row[1].strip() if len(label_row) > 1 and label_row[1] else ''
+        c_val = label_row[2].strip() if len(label_row) > 2 and label_row[2] else ''
+        label = (c_val or b_val).lower()
+
+        if label.startswith(('roic', 'payout ratio')):
+            continue
+
+        source_fmt = cell.get('effectiveFormat', {}).get('numberFormat', {})
+        yoy_match = yoy_re.match(original_formula) if label.endswith(' yoy') else None
+
+        for target_col in target_cols:
+            cell_value = {}
+            fields = 'userEnteredValue'
+            if yoy_match is not None:
+                ref_row = yoy_match.group(2)
+                th = str(header[target_col]).strip() if target_col < len(header) else ''
+                m = re.match(r'^Q([1-4]) (\d{4})$', th)
+                base_col = qcol_by_key.get((int(m.group(1)), int(m.group(2)) - 1)) if m else None
+                if base_col is None:
+                    continue
+                t, b = col_to_letter(target_col), col_to_letter(base_col)
+                if 'IFERROR' in original_formula:
+                    new_formula = f'=IFERROR({t}{ref_row}/{b}{ref_row}-1,)'
+                else:
+                    new_formula = f'={t}{ref_row}/{b}{ref_row}-1'
+            else:
+                new_formula = shift_formula_columns(original_formula, target_col - source_col)
+            cell_value['userEnteredValue'] = {'formulaValue': new_formula}
+            if source_fmt:
+                cell_value['userEnteredFormat'] = {'numberFormat': source_fmt}
+                fields += ',userEnteredFormat'
+            requests.append({
+                'updateCells': {
+                    'range': {
+                        'sheetId': target_sheet_id,
+                        'startRowIndex': gs_row - 1,
+                        'endRowIndex': gs_row,
+                        'startColumnIndex': target_col,
+                        'endColumnIndex': target_col + 1,
+                    },
+                    'rows': [{'values': [cell_value]}],
+                    'fields': fields,
+                }
+            })
+
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests}
+        ).execute()
+        print(f"  ✓ Pulled {len(requests)} Key Stats formulas into quarter "
+              f"columns {', '.join(col_to_letter(c) for c in sorted(target_cols))}")
 
 
 # ── Main Logic ─────────────────────────────────────────────────────────────
@@ -919,6 +1050,7 @@ def process_quarterly_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None
                 }]}
             ).execute()
             print(f"  ✓ Expanded grid to {required} columns")
+            col_count = required
 
     # Match IS items by name, same as the annual flow
     gs_mapping, _, _ = read_gs_section(service, spreadsheet_id, gs_sheet_name, 'Income Statement')
@@ -1004,6 +1136,11 @@ def process_quarterly_excel_to_gs(excel_path, gs_sheet_name, spreadsheet_id=None
         new_headers = sum(1 for q in qkey_to_gs_col if q not in gs_qcols)
         print(f"  ✓ Wrote {new_headers} new quarter headers "
               f"and {len(updates)} cells for {matched} items")
+
+        appended_cols = [c for q, c in qkey_to_gs_col.items() if q not in gs_qcols]
+        if appended_cols:
+            extend_key_stats_formulas_quarters(service, spreadsheet_id, gs_sheet_name,
+                                               appended_cols, target_sheet_id, col_count)
     else:
         print(f"  No data to write ({matched} matched)")
 

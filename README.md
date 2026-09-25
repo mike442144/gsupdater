@@ -26,7 +26,7 @@ Reads Capital IQ Excel files (`.xls`/`.xlsx`) and writes Income Statement, Balan
 
 Also writes Payout Ratio formulas (`DPS / Basic EPS`), copies Key Stats formulas to new columns automatically (relative copy — every column reference shifts by the source→target offset, so prior-column bases like YoY denominators and ROIC two-period averages move with the formula), and syncs Capital Structure Details from Excel to the Google Sheets 资本结构 tab.
 
-**Quarterly files** (`*Financials Quarterly.xls`, `*Income Statement Quarterly.xls` — detected by `Quarterly` in the filename, or by quarter columns in the workbook's Income Statement header with no annual columns) take a separate path: quarterly Income Statement columns are written into the tab's quarterly columns (`Q1 2021`, `Q2 2021`, …) by quarter key. Quarters newer than the last quarterly column are appended (grid expanded if needed); the CIQ quirk where fiscal Q4 is stamped `Jan-01-YYYY` is rolled back one year, and duplicate quarters (Restated / Reclassified / Press Release variants) resolve to the rightmost Excel column. Income Statement only — quarterly BS/CF sheets are ignored, and the IS `Payout Ratio` line is skipped (per-quarter payout is meaningless; CIQ exports `NA` there).
+**Quarterly files** (`*Financials Quarterly.xls`, `*Income Statement Quarterly.xls` — detected by `Quarterly` in the filename, or by quarter columns in the workbook's Income Statement header with no annual columns) take a separate path: quarterly Income Statement columns are written into the tab's quarterly columns (`Q1 2021`, `Q2 2021`, …) by quarter key. Quarters newer than the last quarterly column are appended (grid expanded if needed); the CIQ quirk where fiscal Q4 is stamped `Jan-01-YYYY` is rolled back one year, and duplicate quarters (Restated / Reclassified / Press Release variants) resolve to the rightmost Excel column. Income Statement only — quarterly BS/CF sheets are ignored, and the IS `Payout Ratio` line is skipped (per-quarter payout is meaningless; CIQ exports `NA` there). After appending quarter columns, Key Stats formulas are pulled right into them: ROIC/Payout rows are skipped (annual-only), YoY rows are rebuilt on the same-quarter-prior-year base, everything else relative-copies from the previous quarter column.
 
 All API requests are paced (~54/min) with 429/5xx retry — Google's per-user Sheets quota is 60 read + 60 write requests per minute, which plain batch runs exceed.
 
@@ -53,6 +53,8 @@ Fetches 扣非净利润 (non-recurring net profit) for A-share companies from th
 - Annual values in year columns (2024, 2025, ...)
 - Quarterly values in quarter columns (Q1 2024, Q2 2024, ...)
 - LTM formula (sum of latest 4 quarters)
+
+Literal 扣非 values are written blue with `#,##0` (the formula cell keeps the default color); appended quarter columns also get their Key Stats formulas pulled right (same quarter-aware rules as the quarterly CIQ flow).
 
 ```bash
 python update_kcfjcxsyjlr.py                     # all A-shares from Summary
@@ -228,6 +230,19 @@ Finds Key Stats formulas that reference a named item's row(s) and wraps those re
 python wrap_keystats_refs.py --item "Minority Interest"                    # all industries
 python wrap_keystats_refs.py --item "Effective Tax Rate %" --spreadsheet-id <ID>
 python wrap_keystats_refs.py --item "Minority Interest" --dry-run
+```
+
+### `unify_tab_formats.py` — Unify number formats across company tabs
+
+One-off/sweep formatter for every `<name>财务` tab of a spreadsheet:
+
+- 扣非净利润 row: literal numeric cells → **blue text** + `#,##0`; the LTM formula cell → `#,##0` with the default color
+- Other literal numeric cells in data columns (year / LTM / quarter) → `#,##0`; EPS-like rows (label contains `eps` or `per share`) → `#,##0.00`
+- Formulas, text, and cells with a deliberate non-NUMBER format (PERCENT, DATE, …) are never touched; cells already matching are skipped, so re-runs write nothing
+
+```bash
+python unify_tab_formats.py --spreadsheet-id <ID>            # apply
+python unify_tab_formats.py --spreadsheet-id <ID> --dry-run  # preview only
 ```
 
 ### `fix_quarterly_keystats.py` — Repair quarterly-column formulas
